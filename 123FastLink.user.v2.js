@@ -106,12 +106,12 @@
         var hasFloder = 0;
         const shareLink = fileInfo.map(function(info, infoIndex, infoArray) { //.filter(item => item != null)
             if (info.Type == 0) {
-                return [info.Etag, info.Size, info.FileName.replace("#", "").replace("$", "")].join('#')
+                return [info.Etag, info.Size, info.FileName.replace("#", "").replace("$", "")].join('#');
             } else {
                 console.log("忽略文件夹", info.FileName);
                 hasFloder = 1;
             }
-        }).filter(item => item != null).join('$');
+        }).filter(item => item != null).join('\n');
         if (hasFloder) {
             alert("文件夹无法秒传，将被忽略");
         }
@@ -122,10 +122,12 @@
     // ----------------------------------------------------接受秒传----------------------------------------------------
     // ==================📥 参数解析 ====================
     function getShareFileInfo(shareLink) {
-
-        const shareLinkList = Array.from(shareLink.split('$'));
+        const shareLinkList = Array.from(shareLink.replace(/\r?\n/g, '$').split('$'));
         const shareFileInfoList = shareLinkList.map(function(singleShareLink, linkIndex, linkArray) {
             const singleFileInfoList = singleShareLink.split('#');
+            if (singleFileInfoList.length < 3) {
+                return null;
+            }
             const singleFileInfo = {
                 etag: singleFileInfoList[0],
                 size: singleFileInfoList[1],
@@ -160,7 +162,11 @@
         try {
             const shareFileList = getShareFileInfo(shareLink);
             for (var i = 0; i < shareFileList.length; i++) {
-                getSingleFile(shareFileList[i]);
+                const fileInfo = shareFileList[i];
+                if (fileInfo === null) {
+                    continue; // 跳过空行
+                }
+                getSingleFile(fileInfo);
             }
             return 1
         } catch {
@@ -184,7 +190,7 @@
             .modal-overlay {display: flex;position: fixed;top: 0;left: 0;width: 100%;height: 100%;background: rgba(0, 0, 0, 0.5);justify-content: center;align-items: center;z-index: 2; }
             .modal {background: white;padding: 20px;border-radius: 8px;box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);text-align: center;width: 300px;}
             .close-btn {background: #f44336;color: white;border: none;padding: 5px 10px;cursor: pointer;float: right;}
-            .modal input {width: 90%;padding: 8px;margin: 10px 0;border: 1px solid #ccc;border-radius: 4px;}
+            .modal textarea {width: 90%;padding: 8px;margin: 10px 0;border: 1px solid #ccc;border-radius: 4px;resize: vertical;min-height: 100px;}
             .copy-btn {background: #4CAF50;color: white;border: none;padding: 8px 12px;cursor: pointer;border-radius: 4px;}
         `;
             document.head.appendChild(style);
@@ -204,7 +210,7 @@
         <div class="modal">
             <button class="close-btn" onclick="document.getElementById('modal').remove()">×</button>
             <h3>秒传链接</h3>
-            <input type="text" id="copyText" value="${defaultText}">
+            <textarea id="copyText">${defaultText}</textarea>
             <button class="copy-btn" id="massageboxButton" onclick="${buttonFunction}()">${buttonText}</button>
         </div>
     `;
@@ -220,22 +226,22 @@
 
     // ===================📋 写入剪贴板 ====================
     async function copyToClipboard() {
-    try {
-        const inputField = document.getElementById('copyText');
-        if (!inputField) {
-            throw new Error('找不到输入框元素');
+        try {
+            const inputField = document.getElementById('copyText');
+            if (!inputField) {
+                throw new Error('找不到输入框元素');
+            }
+
+            // 使用现代 Clipboard API
+            await navigator.clipboard.writeText(inputField.value);
+
+            // 更新提示信息
+            alert('已成功复制到剪贴板 📋');
+        } catch (err) {
+            console.error('复制失败:', err);
+            alert(`复制失败: ${err.message || '请手动复制内容'}`);
         }
-        
-        // 使用现代 Clipboard API
-        await navigator.clipboard.writeText(inputField.value);
-        
-        // 更新提示信息
-        alert('已成功复制到剪贴板 📋');
-    } catch (err) {
-        console.error('复制失败:', err);
-        alert(`复制失败: ${err.message || '请手动复制内容'}`);
     }
-}
 
     // ================== 获取文件 ====================
     function startGetFile() {
