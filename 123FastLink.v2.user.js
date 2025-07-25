@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025-01-29
+// @version      2025.7.25
 // @description  Creat and save 123pan instant links.
 // @author       Baoqing
+// @author       Chaofan
+// @author       lipkiat
 // @match        *://*.123pan.com/*
 // @match        *://*.123pan.cn/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=123pan.com
