@@ -260,8 +260,16 @@
         }
     }
 
-    // 等待页面加载完成创建秒传按钮
-    window.addEventListener('load', function() {
+    // ================== 添加秒传按钮的主方法 ================== 
+    function addButton() {
+        //判断是否已经存在按钮了
+        const buttonExist = document.querySelector('.mfy-button-container');
+        if (buttonExist) return;
+
+        //判断是否在文件列表页面
+        const isFilePage = window.location.pathname == "/" && (window.location.search == "" || window.location.search.includes("homeFilePath"));
+        if (!isFilePage) return;
+
         // 查找目标容器
         const container = document.querySelector('.home-operator-button-group');
         if (!container) return;
@@ -279,8 +287,11 @@
         btn.style.color = "#fff";
         btn.style.border = "none";
         btn.innerHTML = `
-            <svg class="icon home-operator-icon-upload" aria-hidden="true">
-                <use xlink:href="#general_upload_16_1"></use>
+            <svg t="1753345987410" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2781"
+                width="16" height="16">
+                <path
+                    d="M395.765333 586.570667h-171.733333c-22.421333 0-37.888-22.442667-29.909333-43.381334L364.768 95.274667A32 32 0 0 1 394.666667 74.666667h287.957333c22.72 0 38.208 23.018667 29.632 44.064l-99.36 243.882666h187.050667c27.509333 0 42.186667 32.426667 24.042666 53.098667l-458.602666 522.56c-22.293333 25.408-63.626667 3.392-54.976-29.28l85.354666-322.421333z"
+                    fill="#ffffff" p-id="2782"></path>
             </svg>
             <span>秒传</span>
         `;
@@ -370,6 +381,33 @@
                 dropdown.style.display = 'none';
             }, 300); // 10毫秒延迟
         });
-    });
+    }
+
+    // 等待页面加载完成创建秒传按钮
+    window.addEventListener('load', addButton);
+
+    // 下面的是为了监测地址栏发生变化时，重新添加秒传按钮，主要是为了解决当跳转到其他页面（如分享页）再跳转回全部文件页面时，秒传按钮不再加载的BUG
+    // 虽然只要地址栏发生变化就会触发添加秒传按钮，但是在添加按钮的方法中判断了当前的页面是否是全部文件页面，只有在全部文件页面上才会继续添加
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+
+    history.pushState = function () {
+        originalPushState.apply(this, arguments);
+        triggerUrlChange();
+    };
+
+    history.replaceState = function () {
+        originalReplaceState.apply(this, arguments);
+        triggerUrlChange();
+    };
+
+    // 监听浏览器前进/后退
+    window.addEventListener('popstate', triggerUrlChange);
+
+    // 统一触发函数
+    function triggerUrlChange() {
+        //此处必须有延迟，否则秒传按钮不会显示
+        setTimeout(addButton, 10);
+    }
 
 })();
