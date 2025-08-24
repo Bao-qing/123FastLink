@@ -81,7 +81,8 @@
                 "/b/api/file/list/new",
                 urlParams
             );
-            console.log("[123FASTLINK] [PanApiClient]", "获取文件列表:", data.data.InfoList);
+            //console.log("[123FASTLINK] [PanApiClient]", "获取文件列表:", data.data.InfoList);
+            console.log("[123FASTLINK] [PanApiClient]", "获取文件列表 ID：", parentFileId, "Page：", page);
             return { data: { InfoList: data.data.InfoList }, total: data.data.Total };
             //return { data: { fileList: data.data.fileList } };
         }
@@ -253,7 +254,7 @@
                 });
                 return element;
             };
-            console.log('[123FASTLINK] [Selector] HOOK已激活');
+            console.log('[123FASTLINK] [Selector] CreatElement监听已激活');
         }
 
         _bindSelectAllEvent(checkbox) {
@@ -303,9 +304,9 @@
             this.progressDesc = "";    // 进度说明
             // TODO 调整合适的参数
             this.getFileInfoBatchSize = 20; // 分批大小
-            this.getFileInfoDelay = 1000;  // 获取文件信息延时
-            this.getFloderInfoDelay = 1000; // 获取文件夹内文件信息延时
-            this.saveLinkDelay = 500;      // 保存链接延时
+            this.getFileInfoDelay = 500;  // 获取文件信息延时
+            this.getFloderInfoDelay = 500; // 获取文件夹内文件信息延时
+            this.saveLinkDelay = 200;      // 保存链接延时
             this.fileInfoList = []
         }
 
@@ -465,6 +466,9 @@
     class UiManager {
         constructor(shareLinkManager) {
             this.shareLinkManager = shareLinkManager;
+            // 进度条最小化标志（模态被最小化到右下角）
+            this.isProgressMinimized = false;
+            this.minimizeWidgetId = 'progress-minimize-widget';
         }
 
         insertStyle() {
@@ -486,10 +490,15 @@
                 .toast.error { border-left: 4px solid #f44336; }
                 .toast.warning { border-left: 4px solid #ff9800; }
                 .toast.info { border-left: 4px solid #2196F3; }
-                @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-                @keyframes modalSlideIn { from { opacity: 0; transform: scale(0.9) translateY(-20px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-                @keyframes toastSlideIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
-                @keyframes toastSlideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
+                /* 最小化按钮（卡片左上角），黄色圆形减号 */
+                .progress-minimize-btn{position:absolute;left:-10px;top:-10px;width:30px;height:30px;border-radius:50%;background:#ffc504;color:#000000ff;border:none;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);z-index:10003}.progress-minimize-btn:hover{transform:scale(1.05)}
+                /*右下角最小化浮动卡片*/
+                .minimized-widget{position:fixed;right:20px;bottom:20px;width:220px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:10px 12px;z-index:10005;display:flex;align-items:center;gap:10px;cursor:pointer}
+                .minimized-widget .mini-bar{flex:1}
+                .minimized-widget .mini-title{font-size:12px;color:#333;margin-bottom:6px}
+                .minimized-widget .mini-progress{height:8px;background:#eee;border-radius:6px;overflow:hidden}
+                .minimized-widget .mini-progress>i{display:block;height:100%;background:#4CAF50;width:0%;transition:width 0.2s}
+                .minimized-widget .mini-percent{font-size:12px;color:#666;width:36px;text-align:right}
                 `;
                 document.head.appendChild(style);
             }
@@ -552,13 +561,20 @@
         }
 
         showProgressModal(title = "正在处理...", percent = 0, desc = "") {
+            // 如果处于最小化状态，则展示/更新右下角浮动卡片并返回
+            if (this.isProgressMinimized) {
+                this.createOrUpdateMinimizedWidget(title, percent, desc);
+                return;
+            }
+
             let modal = document.getElementById('progress-modal');
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'progress-modal';
                 modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10001;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;';
                 modal.innerHTML = `
-                    <div style="background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;text-align:center;">
+                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;text-align:center;">
+                        <button class="progress-minimize-btn" title="最小化">−</button>
                         <div id="progress-title" style="margin-bottom:16px;font-size:18px;">${title}</div>
                         <div style="background:#eee;border-radius:8px;overflow:hidden;height:18px;">
                             <div id="progress-bar" style="background:#4CAF50;height:18px;width:${percent}%;transition:width 0.2s;"></div>
@@ -568,6 +584,22 @@
                     </div>
                 `;
                 document.body.appendChild(modal);
+
+                // 绑定最小化按钮事件（点击后移除模态并创建右下角浮动卡片）
+                const btn = modal.querySelector('.progress-minimize-btn');
+                if (!btn.dataset.bound) {
+                    btn.dataset.bound = 'true';
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.isProgressMinimized = true;
+                        // 读取当前进度显示到浮动卡片
+                        const curTitle = modal.querySelector('#progress-title')?.innerText || title;
+                        const curPercent = parseInt(modal.querySelector('#progress-percent')?.innerText || percent) || 0;
+                        const curDesc = modal.querySelector('#progress-desc')?.innerText || desc;
+                        this.removeProgressModalAndKeepState();
+                        this.createOrUpdateMinimizedWidget(curTitle, curPercent, curDesc);
+                    });
+                }
             } else {
                 modal.querySelector('#progress-title').innerText = title;
                 modal.querySelector('#progress-bar').style.width = percent + '%';
@@ -575,11 +607,54 @@
                 modal.querySelector('#progress-desc').innerText = desc;
             }
         }
+        // 隐藏模态并删除浮动卡片
         hideProgressModal() {
+            const modal = document.getElementById('progress-modal');
+            if (modal) modal.remove();
+            this.removeMinimizedWidget();
+            this.isProgressMinimized = false;
+        }
+
+        // 移除模态但保留 isProgressMinimized 标志（供最小化按钮调用）
+        removeProgressModalAndKeepState() {
             const modal = document.getElementById('progress-modal');
             if (modal) modal.remove();
         }
 
+        // 创建或更新右下角最小化浮动卡片
+        createOrUpdateMinimizedWidget(title = '正在处理...', percent = 0, desc = '') {
+            let widget = document.getElementById(this.minimizeWidgetId);
+            const html = `
+                <div class="mini-bar">
+                    <div class="mini-title">${title}</div>
+                    <div class="mini-progress"><i style="width:${percent}%"></i></div>
+                </div>
+                <div class="mini-percent">${percent}%</div>
+            `;
+            if (!widget) {
+                widget = document.createElement('div');
+                widget.id = this.minimizeWidgetId;
+                widget.className = 'minimized-widget';
+                widget.innerHTML = html;
+                // 修复点击不灵敏：用mousedown替换click，并阻止冒泡
+                widget.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    this.isProgressMinimized = false;
+                    this.removeMinimizedWidget();
+                    // 重新显示模态，使用当前进度值
+                    this.showProgressModal(title, percent, desc);
+                });
+                document.body.appendChild(widget);
+            } else {
+                widget.innerHTML = html;
+            }
+        }
+
+        removeMinimizedWidget() {
+            const w = document.getElementById(this.minimizeWidgetId);
+            if (w) w.remove();
+        }
 
         async showGenerateModal() {
             // 轮询进度
@@ -805,7 +880,7 @@
         window._selector = selector;
         window._uiManager = uiManager;
     }
-    
+
     // 页面加载和路由变化时添加按钮
     window.addEventListener('load', () => uiManager.addButton());
     const originalPushState = history.pushState;
