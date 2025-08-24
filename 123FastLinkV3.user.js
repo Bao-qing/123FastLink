@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025.7.25
+// @version      2025.8.24.1
 // @description  Creat and save 123pan instant links.
 // @author       Baoqing
 // @author       Chaofan
