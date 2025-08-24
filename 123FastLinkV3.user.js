@@ -499,6 +499,15 @@
                 .minimized-widget .mini-progress{height:8px;background:#eee;border-radius:6px;overflow:hidden}
                 .minimized-widget .mini-progress>i{display:block;height:100%;background:#4CAF50;width:0%;transition:width 0.2s}
                 .minimized-widget .mini-percent{font-size:12px;color:#666;width:36px;text-align:right}
+                /*TOAST*/
+                .toast-shake {animation: toastShake 0.4s cubic-bezier(.36,.07,.19,.97) both, toastSlideIn 0.3s ease-out;}
+                @keyframes toastShake {
+                    10%, 90% { transform: translateX(-2px); }
+                    20%, 80% { transform: translateX(4px); }
+                    30%, 50%, 70% { transform: translateX(-8px); }
+                    40%, 60% { transform: translateX(8px); }
+                    100% { transform: translateX(0); }
+                }
                 `;
                 document.head.appendChild(style);
             }
@@ -507,7 +516,7 @@
         showToast(message, type = 'info', duration = 3000) {
             this.insertStyle();
             const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
+            toast.className = `toast ${type} toast-shake`; // 添加 toast-shake 类
             toast.textContent = message;
             document.body.appendChild(toast);
 
