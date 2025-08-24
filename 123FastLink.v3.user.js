@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025.8.24.1
+// @version      2025.8.24.2
 // @description  Creat and save 123pan instant links.
 // @author       Baoqing
 // @author       Chaofan
@@ -368,7 +368,7 @@
                 fileInfo = fileInfo.filter(file => !fileSelectInfo.unselectedRowKeys.includes(file.FileId.toString()));
                 // 放到全局属性里，方便后面递归继续添加
                 this.fileInfoList.push(...fileInfo);
-                fileSelectFloderIdList = allFileInfo.filter(file => file.Type === 1).map(file => file.FileId);
+                fileSelectFloderIdList = allFileInfo.filter(file => file.Type === 1).filter(file => !fileSelectInfo.unselectedRowKeys.includes(file.FileId.toString())).map(file => file.FileId);
                 // const fileFolderInfo = fileInfo.filter(file => file.Type === 1);
                 // for (const folder of fileFolderInfo) {
                 //     await this.getAllFileInfoByFloderId(folder.FileId);
