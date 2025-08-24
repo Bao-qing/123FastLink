@@ -14,7 +14,7 @@
 
 (function () {
     'use strict';
-    const DEBUG = true;
+    const DEBUG = false;
 
     // 1. 123云盘API通信类
     class PanApiClient {
