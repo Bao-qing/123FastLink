@@ -15,167 +15,19 @@
 
 (function () {
     'use strict';
+    const GlobalConfig = {
+        scriptVersion: "3.0.1",
+        usesBase62EtagsInExport: true,
+        getFileListPageDelay: 500,
+        getFileInfoBatchSize: 100,
+        getFileInfoDelay: 200,
+        getFolderInfoDelay: 300,
+        saveLinkDelay: 100,
+        scriptName: "123FASTLINKV3",
+        scriptVersion: "3.0.1",
+        COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$"
+    };
     const DEBUG = true;
-    // 模拟浏览器环境
-    // var window = {
-    //     location: {
-    //         host: "www.123pan.com",
-    //     },
-    //     sessionStorage: {
-    //     }
-    // };
-
-    // var localStorage = {
-    //     'authorToken': "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTY3MzMzMTgsImlhdCI6MTc1NjEyODUxOCwiaWQiOjE4NDYzMDE5NDMsIm1haWwiOiIiLCJuaWNrbmFtZSI6IjE2Nzk2MTIwODUxIiwic3VwcGVyIjpmYWxzZSwidXNlcm5hbWUiOjE2Nzk2MTIwODUxLCJ2IjowfQ.RGsu0mI8GgWe-Ijbf-BroMa18OsieeOk0ReFJg0Io7o",
-    //     'LoginUuid': "104c52b90f979e9fec605420327d9c29c47ce8cacbfcd89a2eb6333d7d581af4c26f53b73653d9d4c648ac1bc305426a",
-    // };
-
-    // var document = {
-    //     location:{
-    //         href:"https://www.123pan.com"
-    //     }
-    // }
-    // 集成ShareLinkJsonManager类
-    class ShareLinkJsonManager {
-        static shareLinkToJson(shareLink, options = {}) {
-            const lines = shareLink
-                .replace(/\r?\n/g, '$')
-                .split('$')
-                .map(line => line.trim())
-                .filter(Boolean);
-
-            let commonPath = options.commonPath || '';
-            const usesBase62EtagsInExport = options.usesBase62EtagsInExport !== undefined ? options.usesBase62EtagsInExport : true;
-
-            const files = lines.map(line => {
-                const [etag, size, ...nameParts] = line.split('#');
-                const fileName = nameParts.join('#');
-                return {
-                    etag: usesBase62EtagsInExport ? ShareLinkJsonManager.hexToBase62(etag) : etag,
-                    size,
-                    path: fileName
-                };
-            });
-
-            if (!commonPath && files.length > 1) {
-                const paths = files.map(f => f.path.split('/'));
-                let prefix = [];
-                for (let i = 0; ; i++) {
-                    const seg = paths[0][i];
-                    if (seg && paths.every(p => p[i] === seg)) {
-                        prefix.push(seg);
-                    } else {
-                        break;
-                    }
-                }
-                if (prefix.length) {
-                    commonPath = prefix.join('/') + '/';
-                    files.forEach(f => {
-                        f.path = f.path.substring(commonPath.length);
-                    });
-                }
-            }
-
-            const totalSize = files.reduce((sum, f) => sum + Number(f.size), 0);
-            return {
-                scriptVersion: "1.0.0",
-                exportVersion: "1.0",
-                usesBase62EtagsInExport,
-                commonPath,
-                totalFilesCount: files.length,
-                totalSize,
-                formattedTotalSize: ShareLinkJsonManager.formatSize(totalSize),
-                files: files.map(f => ({
-                    path: f.path,
-                    size: f.size,
-                    etag: f.etag
-                }))
-            };
-        }
-
-        static jsonToShareLink(json) {
-            const commonPath = json.commonPath || '';
-            const usesBase62 = !!json.usesBase62EtagsInExport;
-            return (json.files || [])
-                .map(f => {
-                    const fileName = commonPath ? (commonPath + f.path) : f.path;
-                    const safeName = fileName.replace(/[#\$]/g, '');
-                    const etag = usesBase62 ? ShareLinkJsonManager.base62ToHex(f.etag) : f.etag;
-                    return [etag, f.size, safeName].join('#');
-                })
-                .join('\n');
-        }
-
-        static formatSize(size) {
-            if (size < 1024) return size + ' B';
-            if (size < 1024 * 1024) return (size / 1024).toFixed(2) + ' KB';
-            if (size < 1024 * 1024 * 1024) return (size / 1024 / 1024).toFixed(2) + ' MB';
-            return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
-        }
-
-        static validateJson(json) {
-            return (
-                json &&
-                Array.isArray(json.files) &&
-                json.files.every(f => f.etag && f.size && f.path)
-            );
-        }
-
-        static safeParse(str) {
-            try {
-                return JSON.parse(str);
-            } catch {
-                return null;
-            }
-        }
-
-        static parseJsonShareLink(json) {
-            if (typeof json === 'string') {
-                try {
-                    json = JSON.parse(json);
-                } catch {
-                    return [];
-                }
-            }
-            if (!json || !Array.isArray(json.files)) return [];
-            const usesBase62 = !!json.usesBase62EtagsInExport;
-
-            return json.files.map(f => ({
-                etag: usesBase62 ? ShareLinkJsonManager.base62ToHex(f.etag) : f.etag,
-                size: f.size,
-                fileName: json.commonPath ? (json.commonPath + f.path) : f.path
-            }));
-        }
-
-        static get base62chars() {
-            return '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        }
-
-        static hexToBase62(hex) {
-            if (!hex) return '';
-            let num = BigInt('0x' + hex);
-            if (num === 0n) return '0';
-            let chars = [];
-            const base62 = ShareLinkJsonManager.base62chars;
-            while (num > 0n) {
-                chars.push(base62[Number(num % 62n)]);
-                num = num / 62n;
-            }
-            return chars.reverse().join('');
-        }
-
-        static base62ToHex(base62) {
-            if (!base62) return '';
-            const chars = ShareLinkJsonManager.base62chars;
-            let num = 0n;
-            for (let i = 0; i < base62.length; i++) {
-                num = num * 62n + BigInt(chars.indexOf(base62[i]));
-            }
-            let hex = num.toString(16);
-            if (hex.length % 2) hex = '0' + hex;
-            return hex;
-        }
-    }
 
     // 1. 123云盘API通信类
     class PanApiClient {
@@ -185,7 +37,7 @@
             this.loginUuid = localStorage['LoginUuid'];
             this.appVersion = '3';
             this.referer = document.location.href;
-            this.getFileListPageDelay = 500;
+            this.getFileListPageDelay = GlobalConfig.getFileListPageDelay;
             this.progress = 0;
             this.progressDesc = "";
 
@@ -314,9 +166,10 @@
         }
 
         // 获取文件
-        async getFile(fileInfo) {
-            // TODO: 不要每次都获取父级文件ID，如果用户此时切换页面，文件保存路径也会变！
-            const parentFileId = await this.getParentFileId();
+        async getFile(fileInfo, parentFileId) {
+            if (!parentFileId) {
+                parentFileId = await this.getParentFileId();
+            }
             const reuse = await this.uploadRequest({
                 driveId: 0,
                 etag: fileInfo.etag,
@@ -329,7 +182,7 @@
             return reuse;
         }
 
-        async mkdirInNowFloder(folderName = "New Folder") {
+        async mkdirInNowFolder(folderName = "New Folder") {
             const parentFileId = await this.getParentFileId();
             return this.mkdir(parentFileId, folderName);
         }
@@ -355,7 +208,7 @@
                         RequestSource: null
                     })
                 );
-                folderFileId = response['data']['Info']['fileId'];
+                folderFileId = response['data']['Info']['FileId'];
             } catch (error) {
                 console.error('[123FASTLINK] [PanApiClient]', '创建文件夹失败:', error);
                 return {
@@ -515,16 +368,25 @@
             this.selector = selector;
             this.progress = 0;
             this.progressDesc = "";
-            this.getFileInfoBatchSize = 20;
-            this.getFileInfoDelay = 500;
-            this.getFloderInfoDelay = 500;
-            this.saveLinkDelay = 200;
+            this.getFileInfoBatchSize = GlobalConfig.getFileInfoBatchSize;
+            this.getFileInfoDelay = GlobalConfig.getFileInfoDelay;
+            this.getFolderInfoDelay = GlobalConfig.getFolderInfoDelay;
+            this.saveLinkDelay = GlobalConfig.saveLinkDelay;
             this.fileInfoList = [],
-                this.scriptName = "123FASTLINKV3"
+                this.scriptName = GlobalConfig.scriptName,
+                this.commonPath = "",
+                this.COMMON_PATH_LINK_PREFIX_V2 = GlobalConfig.COMMON_PATH_LINK_PREFIX_V2,
+                this.usesBase62EtagsInExport = GlobalConfig.usesBase62EtagsInExport,
+                this.scriptVersion = GlobalConfig.scriptVersion
         }
 
-        async getAllFileInfoByFloderId(parentFileId, folderName = '', total) {
-            // total 用来计算进度
+        /**
+         * 获取指定文件夹下的所有文件信息
+         * @param {*} parentFileId 
+         * @param {*} folderName,逐级加长拼接
+         * @param {*} total 仅用来计算进度
+         */
+        async getAllFileInfoByFolderId(parentFileId, folderName = '', total) {
             //console.log("[123FASTLINK] [ShareLinkManager]", await this.apiClient.getFileList(parentFileId));
             this.progressDesc = `正在扫描文件夹：${folderName}`;
             let progress = this.progress;
@@ -541,7 +403,7 @@
             }, 500);
             const allFileInfoList = (await this.apiClient.getFileList(parentFileId)).data.InfoList;
             clearInterval(progressUpdater);
-            
+
             // 分开文件和文件夹
             // 文件添加所在文件夹名称
             const fileInfo = allFileInfoList.filter(file => file.Type !== 1);
@@ -553,23 +415,23 @@
             console.log("[123FASTLINK] [ShareLinkManager]", "获取文件列表,ID:", parentFileId);
 
             const fileFolderInfo = allFileInfoList.filter(file => file.Type === 1);
-            // if (fileFolderInfo.length === 0) {
-            //     this.progress = progress + 100 / total;
-            // }
             for (const folder of fileFolderInfo) {
                 // 延时
-                await new Promise(resolve => setTimeout(resolve, this.getFloderInfoDelay));
-                await this.getAllFileInfoByFloderId(folder.FileId, folderName + folder.FileName + "/", total * fileFolderInfo.length);
+                await new Promise(resolve => setTimeout(resolve, this.getFolderInfoDelay));
+                await this.getAllFileInfoByFolderId(folder.FileId, folderName + folder.FileName + "/", total * fileFolderInfo.length);
             }
             this.progress = progress + 100 / total;
         }
 
-        // 批量获取文件信息
+        /**
+         * 批量获取文件信息
+         * @param {*} idList - 文件ID列表
+         * @returns - 来自服务器的文件全面数据
+         */
         async getFileInfoBatch(idList) {
             const total = idList.length;
             let completed = 0;
             let allFileInfo = [];
-
             for (let i = 0; i < total; i += this.getFileInfoBatchSize) {
                 const batch = idList.slice(i, i + this.getFileInfoBatchSize);
                 try {
@@ -587,14 +449,42 @@
             return allFileInfo;
         }
 
-        async generateShareLink() {
-            this.progress = 0;
-            this.progressDesc = "准备获取文件信息...";
+        /**
+         * 获取this.fileInfoList的公共路径
+         * @returns this.commonPath / commonPath
+         */
+        async getCommonPath() {
+            // 获取文件夹的公共路径
+            if (!this.fileInfoList || this.fileInfoList.length === 0) return '';
+
+            const paths = this.fileInfoList.map(file => file.FolderName);
+
+            // 提取每个路径的第一层文件夹名（第一个/前的部分）
+            const firstLevelPaths = paths.map(path => {
+                if (!path) return '';
+                const firstSlashIndex = path.indexOf('/');
+                return firstSlashIndex === -1 ? path : path.substring(0, firstSlashIndex);
+            });
+
+            // 检查是否所有第一层路径都相同
+            const firstPath = firstLevelPaths[0] || '';
+            const allSame = firstLevelPaths.every(path => path === firstPath);
+
+            // 如果所有第一层路径都相同且不为空，则返回该路径加上/，否则返回空字符串
+            const commonPath = allSame && firstPath ? firstPath + '/' : '';
+
+            this.commonPath = commonPath;
+            return commonPath;
+        }
+
+        /**
+         * 获取所有选择的文件,进入文件夹
+         * @returns  - this.fileInfoList
+         */
+        async getAllSelectFile(){
             const fileSelectInfo = this.selector.getSelection();
-
             this.fileInfoList = [];
-            let fileSelectFloderInfoList = [];
-
+            let fileSelectFolderInfoList = [];
             if (fileSelectInfo.isSelectAll) {
                 this.progress = 10;
                 this.progressDesc = "正在递归获取选择的文件..."
@@ -605,13 +495,9 @@
                 fileInfo.filter(file => !fileSelectInfo.unselectedRowKeys.includes(file.FileId.toString())).forEach(file => {
                     file.FolderName = "";
                 });
-                // 放到全局属性里，方便后面递归继续添加
+                // 方便后面继续添加
                 this.fileInfoList.push(...fileInfo);
-                fileSelectFloderInfoList = allFileInfo.filter(file => file.Type === 1).filter(file => !fileSelectInfo.unselectedRowKeys.includes(file.FileId.toString()));
-                // const fileFolderInfo = fileInfo.filter(file => file.Type === 1);
-                // for (const folder of fileFolderInfo) {
-                //     await this.getAllFileInfoByFloderId(folder.FileId);
-                // }
+                fileSelectFolderInfoList = allFileInfo.filter(file => file.Type === 1).filter(file => !fileSelectInfo.unselectedRowKeys.includes(file.FileId.toString()));
             } else {
                 // 未全选
                 let fileSelectIdList = fileSelectInfo.selectedRowKeys;
@@ -628,59 +514,167 @@
                     file.FolderName = "";
                 });
                 this.fileInfoList.push(...fileInfo);
-
-                fileSelectFloderInfoList = allFileInfo.filter(info => info.Type === 1);
+                fileSelectFolderInfoList = allFileInfo.filter(info => info.Type === 1);
             }
 
             // 处理文件夹，递归获取全部文件
             this.progressDesc = "正在递归获取选择的文件，如果文件夹过多则可能耗时较长";
-            for (let i = 0; i < fileSelectFloderInfoList.length; i++) {
-                const folderInfo = fileSelectFloderInfoList[i];
-                this.progress = Math.round((i / fileSelectFloderInfoList.length) * 100);
-                await new Promise(resolve => setTimeout(resolve, this.getFloderInfoDelay));
-                await this.getAllFileInfoByFloderId(folderInfo.FileId, folderInfo.FileName + "/", fileSelectFloderInfoList.length);
+            for (let i = 0; i < fileSelectFolderInfoList.length; i++) {
+                const folderInfo = fileSelectFolderInfoList[i];
+                this.progress = Math.round((i / fileSelectFolderInfoList.length) * 100);
+                await new Promise(resolve => setTimeout(resolve, this.getFolderInfoDelay));
+                await this.getAllFileInfoByFolderId(folderInfo.FileId, folderInfo.FileName + "/", fileSelectFolderInfoList.length);
+            }
+            // 处理文件夹路径
+            // 检查commonPath
+            const commonPath = await this.getCommonPath();
+            // 去除文件夹路径中的公共路径
+            if (commonPath) {
+                this.fileInfoList.forEach(info => {
+                    // 切片
+                    info.FolderName = info.FolderName.slice(commonPath.length);
+                });
             }
 
-            // 生成秒传链接
-            const shareLink = this.fileInfoList.map(info => {
-                if (info.Type === 0) {
-                    return [info.Etag, info.Size, info.FileName.replace(/[%#$\/]/g, '')].join('#');
-                }
-            }).filter(Boolean).join('\n');
+            if (this.usesBase62EtagsInExport) {
+                this.fileInfoList.forEach(info => {
+                    if (info.Type === 0) {
+                        info.Etag = this.hexToBase62(info.Etag);
+                    }
+                });
+            }
+        }
 
+        /**
+         * 从选择文件生成分享链接
+         * @returns {Promise<string>} - 分享链接
+         */
+        async generateShareLink() {
+            this.progress = 0;
+            this.progressDesc = "准备获取文件信息...";
+
+            await this.getAllSelectFile();
+
+            // 生成秒传链接
+            const shareLinkFileInfo = this.fileInfoList.map(info => {
+                if (info.Type === 0) {
+                    return [info.Etag, info.Size, info.FolderName.replace(/[%#$]/g, '') + info.FileName.replace(/[%#$\/]/g, '')].join('#');
+                }
+            }).filter(Boolean).join('$');
+            const shareLink = `${this.COMMON_PATH_LINK_PREFIX_V2}${this.commonPath}%${shareLinkFileInfo}`;
             // if (hasFolder) alert("文件夹暂时无法秒传，将被忽略");
             this.progressDesc = "秒传链接生成完成";
             return shareLink;
         }
 
-        parseShareLink(shareLink) {
-            const shareLinkList = Array.from(shareLink.replace(/\r?\n/g, '$').split('$'));
+
+        /**
+         * 解析秒传链接
+         * @param {*} shareLink     秒传链接
+         * @param {*} InputUsesBase62  输入是否使用Base62
+         * @param {*} outputUsesBase62 输出是否使用Base62
+         * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
+         */
+        parseShareLink(shareLink, InputUsesBase62 = true, outputUsesBase62 = false) {
+            // Why use Base62 ??? 
+            // 本脚本采用hex传递
+            // 兼容旧版本，检查是否有链接头
+            let commonPath = '';
+            let shareFileInfo = '';
+            if (shareLink.slice(0, 4) === "123F") {
+                const commonPathLinkPrefix = shareLink.split('$')[0];
+                shareLink = shareLink.replace(`${commonPathLinkPrefix}$`, '');
+
+                if (commonPathLinkPrefix + "$" === this.COMMON_PATH_LINK_PREFIX_V2) {
+                    commonPath = shareLink.split('%')[0];
+                    shareFileInfo = shareLink.replace(`${commonPath}%`, '');
+
+                } else {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '不支持的公共路径格式', commonPathLinkPrefix);
+                    return "[123FASTLINK] [ShareLinkManager] 不支持的公共路径格式:" + commonPathLinkPrefix;
+                }
+
+            } else {
+                shareFileInfo = shareLink;
+                InputUsesBase62 = false;
+            }
+
+            const shareLinkList = Array.from(shareFileInfo.replace(/\r?\n/g, '$').split('$'));
+            this.commonPath = commonPath;
             return shareLinkList.map(singleShareLink => {
                 const singleFileInfoList = singleShareLink.split('#');
                 if (singleFileInfoList.length < 3) return null;
                 return {
-                    etag: singleFileInfoList[0],
+                    etag: InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this.base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this.hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]),
                     size: singleFileInfoList[1],
-                    fileName: singleFileInfoList[2]
+                    path: singleFileInfoList[2],
+                    fileName: singleFileInfoList[2].split('/').pop()
                 };
             }).filter(Boolean);
         }
 
+        /**
+         * 保存秒传链接
+         */
         async saveShareLink(shareLink) {
             const shareFileList = this.parseShareLink(shareLink);
+            return await this.saveFileList(shareFileList);
+        }
+
+        /**
+         * 保存文件列表，先创建文件夹，给shareFileList添加上parentFolderId，再保存文件
+         * @param {Array} shareFileList - {etag: string, size: number, path: string, fileName: string}
+         * @returns {Object} - {success: Array, failed: Array}
+        */
+        async saveFileList(shareFileList) {
             const total = shareFileList.length;
             let completed = 0;
             let success = 0;
             let failed = 0;
             let successList = [];
             let failedList = [];
+            // 文件夹创建，并为shareFileList添加parentFolderId------------------------------------
+            // 记录文件夹(path)
+            this.progressDesc = `正在创建文件夹...`;
+            let folder = {};
+            // 如果存在commonPath，先创建文件夹
+            if (this.commonPath) {
+                const commonPathFolderId = (await this.apiClient.mkdirInNowFolder(this.commonPath.replace(/\/$/, '')))['folderFileId'];
+                folder[this.commonPath] = commonPathFolderId;
+            } else {
+                folder[this.commonPath] = await this.apiClient.getParentFileId();
+            }
+
+            for (let i = 0; i < shareFileList.length; i++) {
+                const item = shareFileList[i];
+                const itemPath = item.path.split('/').slice(0, -1);
+
+                let nowParentFolderId = folder[this.commonPath];
+                for (let i = 0; i < itemPath.length; i++) {
+                    const path = itemPath.slice(0, i + 1).join('/');
+                    if (!folder[path]) {
+                        const newFolderID = await this.apiClient.mkdir(nowParentFolderId, itemPath[i]);
+                        folder[path] = newFolderID.folderFileId;
+                        nowParentFolderId = newFolderID.folderFileId;
+                    } else {
+                        nowParentFolderId = folder[path];
+                    }
+                }
+                shareFileList[i].parentFolderId = nowParentFolderId;
+            }
+
+            // 获取文件 ------------------------------------------------------------------
             for (let i = 0; i < shareFileList.length; i++) {
                 const fileInfo = shareFileList[i];
-                if (!fileInfo) continue;
                 if (i > 0) {
                     await new Promise(resolve => setTimeout(resolve, this.saveLinkDelay));
                 }
-                const reuse = await this.apiClient.getFile(fileInfo);
+
+                const reuse = await this.apiClient.getFile({
+                    etag: fileInfo.etag,
+                    size: fileInfo.size,
+                    fileName: fileInfo.fileName
+                }, fileInfo.parentFolderId);
                 if (reuse) {
                     success++;
                     successList.push(fileInfo.fileName);
@@ -691,68 +685,136 @@
                 }
                 completed++;
                 console.log('[123FASTLINK] [ShareLinkManager]', '已保存:', fileInfo.fileName);
-                console.log(completed);
                 this.progress = Math.round((completed / total) * 100);
                 this.progressDesc = `正在保存第 ${completed} / ${total} 个文件...`;
             }
-            //this.progress = 100;
-            this.progressDesc = "保存完成";
+            // this.progress = 100;
+            // this.progressDesc = "保存完成";
             return {
                 success: successList,
                 failed: failedList
             };
         }
+        // ----------------------------------------------------JSON相关----------------------------------------------------
 
-        // 添加从JSON解析秒传链接的方法
-        parseJsonShareLink(jsonContent) {
+        safeParse(str) {
             try {
-                const json = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
-                return ShareLinkJsonManager.parseJsonShareLink(json);
-            } catch (error) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '解析JSON失败:', error);
-                return [];
+                return JSON.parse(str);
+            } catch {
+                return null;
             }
         }
 
-        // 保存JSON格式的秒传链接
+        base62chars() {
+            return '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        }
+
+        hexToBase62(hex) {
+            if (!hex) return '';
+            let num = BigInt('0x' + hex);
+            if (num === 0n) return '0';
+            let chars = [];
+            const base62 = this.base62chars();
+            while (num > 0n) {
+                chars.push(base62[Number(num % 62n)]);
+                num = num / 62n;
+            }
+            return chars.reverse().join('');
+        }
+
+        base62ToHex(base62) {
+            if (!base62) return '';
+            const chars = this.base62chars();
+            let num = 0n;
+            for (let i = 0; i < base62.length; i++) {
+                num = num * 62n + BigInt(chars.indexOf(base62[i]));
+            }
+            let hex = num.toString(16);
+            if (hex.length % 2) hex = '0' + hex;
+            while (hex.length < 32) hex = '0' + hex;
+            return hex;
+        }
+
+
+        /**
+         * 解析JSON格式的秒传链接
+         * @param {object} jsonData 
+         * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
+         */
+        parseJsonShareLink(jsonData) {
+            this.commonPath = jsonData['commonPath'] || '';
+            const shareFileList = jsonData['files'];
+            if (jsonData['usesBase62EtagsInExport']) {
+                shareFileList.forEach(file => {
+                    file.etag = this.base62ToHex(file.etag);
+                });
+            }
+            shareFileList.forEach(file => {
+                file.fileName = file.path.split('/').pop();
+            });
+            return shareFileList;
+        }
+
+        // 格式化文件大小
+        formatSize(size) {
+            if (size < 1024) return size + ' B';
+            if (size < 1024 * 1024) return (size / 1024).toFixed(2) + ' KB';
+            if (size < 1024 * 1024 * 1024) return (size / 1024 / 1024).toFixed(2) + ' MB';
+            return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        }
+
+        validateJson(json) {
+            return (
+                json &&
+                Array.isArray(json.files) &&
+                json.files.every(f => f.etag && f.size && f.path)
+            );
+        }
+
+        /**
+         * 将秒传链接转换为JSON格式
+         * @param {*} shareLink 
+         * @returns 
+         */
+        shareLinkToJson(shareLink) {
+            const fileInfo = this.parseShareLink(shareLink);
+            if (fileInfo.length === 0) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+                return {
+                    error: '解析秒传链接失败'
+                };
+            }
+            if (this.usesBase62EtagsInExport) {
+                fileInfo.forEach(f => {
+                    f.etag = this.hexToBase62(f.etag);
+                });
+            }
+            const totalSize = fileInfo.reduce((sum, f) => sum + Number(f.size), 0);
+            return {
+                scriptVersion: this.scriptVersion,
+                exportVersion: "1.0",
+                usesBase62EtagsInExport: this.usesBase62EtagsInExport,
+                commonPath: this.commonPath,
+                totalFilesCount: fileInfo.length,
+                totalSize,
+                formattedTotalSize: this.formatSize(totalSize),
+                files: fileInfo.map(f => ({
+                    // 去掉fileName
+                    ...f,
+                    fileName: undefined
+                }))
+            };
+
+        }
+
+        /**
+         * 保存JSON格式的秒传链接
+         * @param {string} jsonContent 
+         * @returns {Promise<object>} - 保存结果
+         */
         async saveJsonShareLink(jsonContent) {
             const shareFileList = this.parseJsonShareLink(jsonContent);
-            if (shareFileList.length === 0) {
-                throw new Error('无效的JSON格式或没有找到文件信息');
-            }
-
-            const total = shareFileList.length;
-            let completed = 0;
-            let success = 0;
-            let failed = 0;
-            let successList = [];
-            let failedList = [];
-
-            for (let i = 0; i < shareFileList.length; i++) {
-                const fileInfo = shareFileList[i];
-                if (!fileInfo) continue;
-                if (i > 0) {
-                    await new Promise(resolve => setTimeout(resolve, this.saveLinkDelay));
-                }
-                const reuse = await this.apiClient.getFile(fileInfo);
-                if (reuse) {
-                    success++;
-                    successList.push(fileInfo.fileName);
-                } else {
-                    failed++;
-                    console.error('[123FASTLINK] [ShareLinkManager]', '保存文件失败:', fileInfo.fileName);
-                    failedList.push(fileInfo.fileName);
-                }
-                completed++;
-                console.log('[123FASTLINK] [ShareLinkManager]', '已保存:', fileInfo.fileName);
-                this.progress = Math.round((completed / total) * 100);
-                this.progressDesc = `正在保存第 ${completed} / ${total} 个文件...`;
-            }
-            this.progressDesc = "保存完成";
-            return {
-                success: successList,
-                failed: failedList
-            };
+            return await this.saveFileList(shareFileList);
         }
     }
 
@@ -783,7 +845,7 @@
                 .button-group { display: flex; gap: 12px; align-items: center; justify-content: center; position: relative; }
                 .copy-dropdown { position: relative; display: inline-block; }
                 .copy-dropdown-menu { position: absolute; bottom: 100%; left: 0; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; min-width: 120px; z-index: 10001; margin-bottom: 5px; }
-                .copy-dropdown:hover .copy-dropdown-menu { display: block; }
+                .copy-dropdown.show .copy-dropdown-menu { display: block; }
                 .copy-dropdown-item { padding: 10px 16px; cursor: pointer; transition: background 0.2s; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
                 .copy-dropdown-item:last-child { border-bottom: none; }
                 .copy-dropdown-item:hover { background: #f5f5f5; }
@@ -807,6 +869,8 @@
                 .minimized-widget .mini-progress>i{display:block;height:100%;background:#4CAF50;width:0%;transition:width 0.2s}
                 .minimized-widget .mini-percent{font-size:12px;color:#666;width:36px;text-align:right}
                 .toast-shake {animation: toastShake 0.4s cubic-bezier(.36,.07,.19,.97) both, toastSlideIn 0.3s ease-out;}
+                #progress-title { margin-bottom:16px; font-size:18px; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; }
+                #progress-desc { margin-top:8px; font-size:13px; color:#888; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; line-height: 1.4; }
                 @keyframes toastShake {
                     10%, 90% { transform: translateX(-2px); }
                     20%, 80% { transform: translateX(4px); }
@@ -819,6 +883,12 @@
             }
         }
 
+        /**
+         * 显示提示消息（右上角）
+         * @param {*} message 
+         * @param {*} type 
+         * @param {*} duration 
+         */
         showToast(message, type = 'info', duration = 3000) {
             this.insertStyle();
             const toast = document.createElement('div');
@@ -836,6 +906,10 @@
             }, duration);
         }
 
+        /**
+         * 显示复制弹窗
+         * @param {*} defaultText 
+         */
         showCopyModal(defaultText = "") {
             this.insertStyle();
             this.currentShareLink = defaultText;
@@ -865,6 +939,29 @@
                 </div>
             `;
 
+            const dropdown = modalOverlay.querySelector('.copy-dropdown');
+            const dropdownMenu = modalOverlay.querySelector('.copy-dropdown-menu');
+            let hideTimeout;
+
+            // 显示下拉菜单
+            const showDropdown = () => {
+                clearTimeout(hideTimeout);
+                dropdown.classList.add('show');
+            };
+
+            // 隐藏下拉菜单（带延时）
+            const hideDropdown = () => {
+                hideTimeout = setTimeout(() => {
+                    dropdown.classList.remove('show');
+                }, 300);
+            };
+
+            // 鼠标事件绑定
+            dropdown.addEventListener('mouseenter', showDropdown);
+            dropdown.addEventListener('mouseleave', hideDropdown);
+            dropdownMenu.addEventListener('mouseenter', showDropdown);
+            dropdownMenu.addEventListener('mouseleave', hideDropdown);
+
             // 复制按钮事件
             modalOverlay.querySelector('#massageboxButton').addEventListener('click', () => {
                 this.copyContent('text');
@@ -876,6 +973,7 @@
                     e.stopPropagation();
                     const type = item.dataset.type;
                     this.copyContent(type);
+                    dropdown.classList.remove('show');
                 });
             });
 
@@ -895,6 +993,11 @@
             }, 100);
         }
 
+        /**
+         * 复制内容到剪贴板
+         * @param {*} type - 复制类型（文本或JSON）
+         * @returns 
+         */
         copyContent(type) {
             const inputField = document.querySelector('#copyText');
             if (!inputField) return;
@@ -903,7 +1006,7 @@
 
             if (type === 'json') {
                 try {
-                    const jsonData = ShareLinkJsonManager.shareLinkToJson(contentToCopy);
+                    const jsonData = this.shareLinkManager.shareLinkToJson(contentToCopy);
                     contentToCopy = JSON.stringify(jsonData, null, 2);
                 } catch (error) {
                     this.showToast('转换JSON失败: ' + error.message, 'error');
@@ -918,6 +1021,10 @@
             });
         }
 
+        /**
+         * 导出JSON
+         * @returns 
+         */
         exportJson() {
             const inputField = document.querySelector('#copyText');
             if (!inputField) return;
@@ -929,7 +1036,7 @@
             }
 
             try {
-                const jsonData = ShareLinkJsonManager.shareLinkToJson(shareLink);
+                const jsonData = this.shareLinkManager.shareLinkToJson(shareLink);
                 const jsonContent = JSON.stringify(jsonData, null, 2);
                 const filename = this.getExportFilename(shareLink);
 
@@ -955,9 +1062,12 @@
 
         // 获取文件名用于JSON导出
         getExportFilename(shareLink) {
+            if (this.shareLinkManager.commonPath) {
+                const commonPath = this.shareLinkManager.commonPath.replace(/\/$/, ''); // 去除末尾斜杠
+                return `${commonPath}.json`;
+            }
             const lines = shareLink.trim().split('\n').filter(Boolean);
             if (lines.length === 0) return 'export.json';
-
             const firstLine = lines[0];
             const parts = firstLine.split('#');
             if (parts.length >= 3) {
@@ -968,8 +1078,9 @@
             return 'export.json';
         }
 
-        // TODO 进度格式化，文字长度限制
+        // TODO 文字长度限制
         showProgressModal(title = "正在处理...", percent = 0, desc = "") {
+            percent = Math.ceil(percent);
             // 如果处于最小化状态，则展示/更新右下角浮动卡片并返回
             if (this.isProgressMinimized) {
                 this.createOrUpdateMinimizedWidget(title, percent, desc);
@@ -982,14 +1093,14 @@
                 modal.id = 'progress-modal';
                 modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10001;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;';
                 modal.innerHTML = `
-                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;text-align:center;">
+                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;max-width:500px;text-align:center;">
                         <button class="progress-minimize-btn" title="最小化">−</button>
-                        <div id="progress-title" style="margin-bottom:16px;font-size:18px;">${title}</div>
+                        <div id="progress-title" style="margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;">${title}</div>
                         <div style="background:#eee;border-radius:8px;overflow:hidden;height:18px;">
                             <div id="progress-bar" style="background:#4CAF50;height:18px;width:${percent}%;transition:width 0.2s;"></div>
                         </div>
                         <div id="progress-percent" style="margin-top:8px;font-size:14px;">${percent}%</div>
-                        <div id="progress-desc" style="margin-top:8px;font-size:13px;color:#888;">${desc}</div>
+                        <div id="progress-desc" style="margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;">${desc}</div>
                     </div>
                 `;
                 document.body.appendChild(modal);
@@ -1010,13 +1121,20 @@
                     });
                 }
             } else {
-                modal.querySelector('#progress-title').innerText = title;
+                const titleElement = modal.querySelector('#progress-title');
+                const descElement = modal.querySelector('#progress-desc');
+                
+                titleElement.innerText = title;
+                titleElement.style.cssText = 'margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
+                
                 modal.querySelector('#progress-bar').style.width = percent + '%';
                 modal.querySelector('#progress-percent').innerText = percent + '%';
-                modal.querySelector('#progress-desc').innerText = desc;
+                
+                descElement.innerText = desc;
+                descElement.style.cssText = 'margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
             }
         }
-        // 隐藏模态并删除浮动卡片
+        // 隐藏进度条并删除浮动卡片
         hideProgressModal() {
             const modal = document.getElementById('progress-modal');
             if (modal) modal.remove();
@@ -1030,7 +1148,7 @@
             if (modal) modal.remove();
         }
 
-        // 创建或更新右下角最小化浮动卡片
+        // 创建或更新右下角最小化浮动进度条卡片
         createOrUpdateMinimizedWidget(title = '正在处理...', percent = 0, desc = '') {
             let widget = document.getElementById(this.minimizeWidgetId);
             const html = `
@@ -1065,6 +1183,10 @@
             if (w) w.remove();
         }
 
+        /**
+         * 显示生成链接的模态框
+         * @returns 
+         */
         async showGenerateModal() {
             // 轮询进度
             const mgr = this.shareLinkManager;
@@ -1139,6 +1261,9 @@
             document.body.appendChild(modalOverlay);
         }
 
+        /**
+         * 显示保存模态框
+         */
         async showSaveModal() {
             this.insertStyle();
             let existingModal = document.getElementById('save-modal');
@@ -1191,15 +1316,16 @@
                     }
                 }, 100);
 
-                let saveResult;
+                let saveResult = null;
                 try {
                     // 尝试作为JSON解析
-                    const jsonData = ShareLinkJsonManager.safeParse(content);
-                    if (jsonData && ShareLinkJsonManager.validateJson(jsonData)) {
+                    const jsonData = this.shareLinkManager.safeParse(content);
+                    if (jsonData) {
                         saveResult = await this.shareLinkManager.saveJsonShareLink(jsonData);
                     } else {
                         // 作为普通秒传链接处理
                         saveResult = await this.shareLinkManager.saveShareLink(content);
+                        console.log('保存结果:', saveResult);
                     }
                 } catch (error) {
                     console.error('保存失败:', error);
@@ -1267,6 +1393,12 @@
             });
         }
 
+        /**
+         * 读取JSON文件并将内容填充到文本区域
+         * @param {*} file - 要读取的文件
+         * @param {*} textarea - 目标文本区域
+         * @returns 
+         */
         readJsonFile(file, textarea) {
             if (!file.name.toLowerCase().endsWith('.json')) {
                 this.showToast('请选择JSON文件', 'warning');
@@ -1279,9 +1411,9 @@
                     const jsonContent = e.target.result;
                     const jsonData = JSON.parse(jsonContent);
 
-                    if (ShareLinkJsonManager.validateJson(jsonData)) {
-                        const shareLink = ShareLinkJsonManager.jsonToShareLink(jsonData);
-                        textarea.value = shareLink;
+                    if (this.shareLinkManager.validateJson(jsonData)) {
+                        // const shareLink = this.shareLinkManager.jsonToShareLink(jsonData);
+                        textarea.value = jsonContent;
                         this.showToast('JSON文件导入成功 ✅', 'success');
                     } else {
                         this.showToast('无效的JSON格式', 'error');
@@ -1362,7 +1494,6 @@
         }
     }
 
-    // 实例化并初始化
     const apiClient = new PanApiClient();
     const selector = new TableRowSelector();
     const shareLinkManager = new ShareLinkManager(apiClient, selector);
