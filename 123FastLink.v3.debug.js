@@ -24,7 +24,6 @@
         getFolderInfoDelay: 300,
         saveLinkDelay: 100,
         scriptName: "123FASTLINKV3",
-        scriptVersion: "3.0.1",
         COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$"
     };
     const DEBUG = true;
@@ -479,11 +478,14 @@
 
         /**
          * 获取所有选择的文件,进入文件夹
-         * @returns  - this.fileInfoList
+         * @returns  - 文件信息在this.fileInfoList里
+         * @returns  - boolean - 是否成功获取到文件
          */
-        async getAllSelectFile(){
-            const fileSelectInfo = this.selector.getSelection();
+        async getAllSelectFile(fileSelectInfo) {
             this.fileInfoList = [];
+            if (!fileSelectInfo.isSelectAll && fileSelectInfo.selectedRowKeys.length === 0) {
+                return false;
+            }
             let fileSelectFolderInfoList = [];
             if (fileSelectInfo.isSelectAll) {
                 this.progress = 10;
@@ -504,7 +506,7 @@
                 if (!fileSelectIdList.length) {
                     this.progress = 100;
                     this.progressDesc = "未选择文件";
-                    return "";
+                    return false;
                 }
                 // 获取文件信息
 
@@ -518,7 +520,7 @@
             }
 
             // 处理文件夹，递归获取全部文件
-            this.progressDesc = "正在递归获取选择的文件，如果文件夹过多则可能耗时较长";
+            // this.progressDesc = "正在递归获取选择的文件，如果文件夹过多则可能耗时较长";
             for (let i = 0; i < fileSelectFolderInfoList.length; i++) {
                 const folderInfo = fileSelectFolderInfoList[i];
                 this.progress = Math.round((i / fileSelectFolderInfoList.length) * 100);
@@ -536,29 +538,32 @@
                 });
             }
 
-            if (this.usesBase62EtagsInExport) {
-                this.fileInfoList.forEach(info => {
-                    if (info.Type === 0) {
-                        info.Etag = this.hexToBase62(info.Etag);
-                    }
-                });
-            }
+            // if (this.usesBase62EtagsInExport) {
+            //     this.fileInfoList.forEach(info => {
+            //         if (info.Type === 0) {
+            //             info.Etag = this.hexToBase62(info.Etag);
+            //         }
+            //     });
+            // };
+            return true;
         }
 
         /**
          * 从选择文件生成分享链接
-         * @returns {Promise<string>} - 分享链接
+         * @returns {Promise<string>} - 分享链接,如果未选择文件则返回空字符串
          */
-        async generateShareLink() {
+        async generateShareLink(fileSelectInfo) {
             this.progress = 0;
             this.progressDesc = "准备获取文件信息...";
 
-            await this.getAllSelectFile();
-
+            const result = await this.getAllSelectFile(fileSelectInfo);
+            if (!result) return '';
             // 生成秒传链接
             const shareLinkFileInfo = this.fileInfoList.map(info => {
                 if (info.Type === 0) {
-                    return [info.Etag, info.Size, info.FolderName.replace(/[%#$]/g, '') + info.FileName.replace(/[%#$\/]/g, '')].join('#');
+                    return [this.usesBase62EtagsInExport ? this.hexToBase62(info.Etag) : info.Etag,
+                    info.Size,
+                    info.FolderName.replace(/[%#$]/g, '') + info.FileName.replace(/[%#$\/]/g, '')].join('#');
                 }
             }).filter(Boolean).join('$');
             const shareLink = `${this.COMMON_PATH_LINK_PREFIX_V2}${this.commonPath}%${shareLinkFileInfo}`;
@@ -825,7 +830,10 @@
             this.isProgressMinimized = false;
             this.minimizeWidgetId = 'progress-minimize-widget';
             this.currentShareLink = ''; // 存储当前秒传链接
+            this.taskList = []; // 任务列表
+            this.isTaskRunning = false; // 任务是否在运行
         }
+        // taskList = [{type: 'generate'|'save', params: {}}]
 
         insertStyle() {
             if (!document.getElementById("modal-style")) {
@@ -846,7 +854,7 @@
                 .copy-dropdown { position: relative; display: inline-block; }
                 .copy-dropdown-menu { position: absolute; bottom: 100%; left: 0; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; min-width: 120px; z-index: 10001; margin-bottom: 5px; }
                 .copy-dropdown.show .copy-dropdown-menu { display: block; }
-                .copy-dropdown-item { padding: 10px 16px; cursor: pointer; transition: background 0.2s; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
+                .copy-dropdown-item { padding: 10px 16px, cursor: pointer; transition: background 0.2s; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
                 .copy-dropdown-item:last-child { border-bottom: none; }
                 .copy-dropdown-item:hover { background: #f5f5f5; }
                 .copy-dropdown-item:first-child { border-radius: 8px 8px 0 0; }
@@ -913,8 +921,17 @@
         showCopyModal(defaultText = "") {
             this.insertStyle();
             this.currentShareLink = defaultText;
-            let existingModal = document.getElementById('modal');
-            if (existingModal) existingModal.remove();
+            // let existingModal = document.getElementById('modal');
+            // if (existingModal) existingModal.remove();
+
+            // 获取文件名列表
+            let fileListHtml = '';
+            if (Array.isArray(this.shareLinkManager.fileInfoList) && this.shareLinkManager.fileInfoList.length > 0) {
+                fileListHtml = `<div style="max-height:120px;overflow-y:auto;background:#f8f8f8;border-radius:6px;padding:8px 10px;margin-bottom:16px;text-align:left;font-size:13px;">
+                    <div style='color:#888;margin-bottom:4px;'>文件列表（共${this.shareLinkManager.fileInfoList.length}个）:</div>
+                    ${this.shareLinkManager.fileInfoList.map(f => `<div style='color:#333;word-break:break-all;margin:2px 0;'>${f.FolderName ? f.FolderName : ''}${f.FileName ? f.FileName : (f.fileName || '')}</div>`).join('')}
+                </div>`;
+            }
 
             let modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
@@ -923,6 +940,7 @@
                 <div class="modal">
                     <button class="close-btn" onclick="document.getElementById('modal').remove()">×</button>
                     <h3>🚀 秒传链接</h3>
+                    ${fileListHtml}
                     <textarea id="copyText" placeholder="请输入或粘贴秒传链接...">${defaultText}</textarea>
                     <div class="button-group">
                         <div class="copy-dropdown">
@@ -1078,12 +1096,11 @@
             return 'export.json';
         }
 
-        // TODO 文字长度限制
-        showProgressModal(title = "正在处理...", percent = 0, desc = "") {
+        updateProgressModal(title = "正在处理...", percent = 0, desc = "", taskCount = 1) {
             percent = Math.ceil(percent);
             // 如果处于最小化状态，则展示/更新右下角浮动卡片并返回
             if (this.isProgressMinimized) {
-                this.createOrUpdateMinimizedWidget(title, percent, desc);
+                this.createOrUpdateMinimizedWidget(title, percent, desc, taskCount);
                 return;
             }
 
@@ -1093,9 +1110,9 @@
                 modal.id = 'progress-modal';
                 modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10001;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;';
                 modal.innerHTML = `
-                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;max-width:500px;text-align:center;">
+                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;max-width:320px;text-align:center;">
                         <button class="progress-minimize-btn" title="最小化">−</button>
-                        <div id="progress-title" style="margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;">${title}</div>
+                        <div id="progress-title" style="margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;">${title + (taskCount > 1 ? ` - 队列 ${1+taskCount}` : '')}</div>
                         <div style="background:#eee;border-radius:8px;overflow:hidden;height:18px;">
                             <div id="progress-bar" style="background:#4CAF50;height:18px;width:${percent}%;transition:width 0.2s;"></div>
                         </div>
@@ -1113,23 +1130,23 @@
                         e.stopPropagation();
                         this.isProgressMinimized = true;
                         // 读取当前进度显示到浮动卡片
-                        const curTitle = modal.querySelector('#progress-title')?.innerText || title;
+                        const curTitle = modal.querySelector('#progress-title')?.innerText || title + (taskCount > 1 ? ` - 队列 ${1+taskCount}` : '');
                         const curPercent = parseInt(modal.querySelector('#progress-percent')?.innerText || percent) || 0;
                         const curDesc = modal.querySelector('#progress-desc')?.innerText || desc;
                         this.removeProgressModalAndKeepState();
-                        this.createOrUpdateMinimizedWidget(curTitle, curPercent, curDesc);
+                        this.createOrUpdateMinimizedWidget(curTitle, curPercent, curDesc, taskCount);
                     });
                 }
             } else {
                 const titleElement = modal.querySelector('#progress-title');
                 const descElement = modal.querySelector('#progress-desc');
-                
-                titleElement.innerText = title;
+
+                titleElement.innerText = title + (taskCount > 1 ? ` - 队列 ${1+taskCount}` : '');
                 titleElement.style.cssText = 'margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
-                
+
                 modal.querySelector('#progress-bar').style.width = percent + '%';
                 modal.querySelector('#progress-percent').innerText = percent + '%';
-                
+
                 descElement.innerText = desc;
                 descElement.style.cssText = 'margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
             }
@@ -1149,11 +1166,17 @@
         }
 
         // 创建或更新右下角最小化浮动进度条卡片
-        createOrUpdateMinimizedWidget(title = '正在处理...', percent = 0, desc = '') {
+        createOrUpdateMinimizedWidget(title = '正在处理...', percent = 0, desc = '', taskCount = 1) {
             let widget = document.getElementById(this.minimizeWidgetId);
+            // 红点提示，仅在剩余任务数>=2时显示
+            let redDotHtml = '';
+            if (this.taskList.length >= 1) {
+                redDotHtml = `<button class="mini-red-dot" style="position:absolute;left:-8px;top:-8px;width:22px;height:22px;background:#f44336;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;z-index:2;box-shadow:0 2px 6px rgba(0,0,0,0.12);">${this.taskList.length+1}</button>`;
+            }
             const html = `
+                ${redDotHtml}
                 <div class="mini-bar">
-                    <div class="mini-title">${title}</div>
+                    <div class="mini-title">${title + (taskCount > 1 ? ` - 队列 ${1+taskCount}` : '')}</div>
                     <div class="mini-progress"><i style="width:${percent}%"></i></div>
                 </div>
                 <div class="mini-percent">${percent}%</div>
@@ -1170,7 +1193,7 @@
                     this.isProgressMinimized = false;
                     this.removeMinimizedWidget();
                     // 重新显示模态，使用当前进度值
-                    this.showProgressModal(title, percent, desc);
+                    this.updateProgressModal(title, percent, desc, taskCount);
                 });
                 document.body.appendChild(widget);
             } else {
@@ -1184,23 +1207,23 @@
         }
 
         /**
-         * 显示生成链接的模态框
+         * 显示生成链接的模态框，UI层面的生成入口
          * @returns 
          */
-        async showGenerateModal() {
+        async showGenerateModal(fileSelectInfo) {
             // 轮询进度
             const mgr = this.shareLinkManager;
             // this.showProgressModal("生成秒传链接", 0, "准备中...");
             mgr.progress = 0;
             const poll = setInterval(() => {
-                this.showProgressModal("生成秒传链接", mgr.progress, mgr.progressDesc);
+                this.updateProgressModal("生成秒传链接", mgr.progress, mgr.progressDesc, this.taskList.length);
                 if (mgr.progress > 100) {
                     clearInterval(poll);
                     setTimeout(() => this.hideProgressModal(), 500);
                 }
             }, 500);
 
-            const shareLink = await mgr.generateShareLink();
+            const shareLink = await mgr.generateShareLink(fileSelectInfo);
             if (!shareLink) {
                 this.showToast("没有选择文件", 'warning');
                 clearInterval(poll);
@@ -1212,8 +1235,8 @@
         }
         async showResultsModal(result) {
             this.insertStyle();
-            let existingModal = document.getElementById('results-modal');
-            if (existingModal) existingModal.remove();
+            // let existingModal = document.getElementById('results-modal');
+            // if (existingModal) existingModal.remove();
 
             const totalCount = result.success.length + result.failed.length;
             const successCount = result.success.length;
@@ -1262,7 +1285,62 @@
         }
 
         /**
-         * 显示保存模态框
+         * 从输入的纯文本解析并保存秒传链接，包括处理过程中的ui管理
+         * @param {*} content - 输入内容（秒传链接或JSON） 
+         */
+        async saveLink(content) {
+            this.updateProgressModal("保存秒传链接", 0, "准备中...");
+            this.shareLinkManager.progress = 0;
+            const poll = setInterval(() => {
+                this.updateProgressModal("保存秒传链接", this.shareLinkManager.progress, this.shareLinkManager.progressDesc, this.taskList.length);
+                // 正常情况下不主动清除
+                if (this.shareLinkManager.progress > 100) {
+                    clearInterval(poll);
+                }
+            }, 100);
+
+            let saveResult = null;
+            try {
+                // 尝试作为JSON解析
+                const jsonData = this.shareLinkManager.safeParse(content);
+                if (jsonData) {
+                    saveResult = await this.shareLinkManager.saveJsonShareLink(jsonData);
+                } else {
+                    // 作为普通秒传链接处理
+                    saveResult = await this.shareLinkManager.saveShareLink(content);
+                    console.log('保存结果:', saveResult);
+                }
+            } catch (error) {
+                console.error('保存失败:', error);
+                saveResult = { success: [], failed: ['保存过程中发生错误'] };
+            }
+
+            clearInterval(poll);
+            this.hideProgressModal();
+            this.showResultsModal(saveResult);
+            this.renewWebPageList();
+            this.showToast(saveResult ? "保存成功" : "保存失败", saveResult ? 'success' : 'error');
+
+        }
+
+        /**
+         * 刷新页面文件列表
+         */
+        renewWebPageList() {
+            // 刷新页面文件列表
+            const renewButton = document.querySelector('.layout-operate-icon.mfy-tooltip svg');
+            if (renewButton) {
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                renewButton.dispatchEvent(clickEvent);
+            }
+        }
+
+        /**
+         * 显示保存输入模态框
          */
         async showSaveModal() {
             this.insertStyle();
@@ -1306,48 +1384,7 @@
 
                 modalOverlay.remove();
 
-                this.showProgressModal("保存秒传链接", 0, "准备中...");
-                this.shareLinkManager.progress = 0;
-                const poll = setInterval(() => {
-                    this.showProgressModal("保存秒传链接", this.shareLinkManager.progress, this.shareLinkManager.progressDesc);
-                    // 正常情况下不主动清除
-                    if (this.shareLinkManager.progress > 100) {
-                        clearInterval(poll);
-                    }
-                }, 100);
-
-                let saveResult = null;
-                try {
-                    // 尝试作为JSON解析
-                    const jsonData = this.shareLinkManager.safeParse(content);
-                    if (jsonData) {
-                        saveResult = await this.shareLinkManager.saveJsonShareLink(jsonData);
-                    } else {
-                        // 作为普通秒传链接处理
-                        saveResult = await this.shareLinkManager.saveShareLink(content);
-                        console.log('保存结果:', saveResult);
-                    }
-                } catch (error) {
-                    console.error('保存失败:', error);
-                    saveResult = { success: [], failed: ['保存过程中发生错误'] };
-                }
-
-                clearInterval(poll);
-                this.hideProgressModal();
-
-                this.showResultsModal(saveResult);
-                this.showToast(saveResult ? "保存成功" : "保存失败", saveResult ? 'success' : 'error');
-
-                // 刷新页面
-                const renewButton = document.querySelector('.layout-operate-icon.mfy-tooltip svg');
-                if (renewButton) {
-                    const clickEvent = new MouseEvent('click', {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window
-                    });
-                    renewButton.dispatchEvent(clickEvent);
-                }
+                this.addAndRunTask('save', { content });
             });
 
             modalOverlay.addEventListener('click', (e) => {
@@ -1425,6 +1462,48 @@
             reader.readAsText(file);
         }
 
+        runNextTask() {
+            if (this.isTaskRunning) return this.showToast("已添加到队列，稍后执行", 'info');
+            if (this.taskList.length === 0) return null;
+            const task = this.taskList.shift();
+            // 执行任务
+            if (task.type === 'generate') {
+                // 生成秒传链接
+                setTimeout(async () => {
+                    this.isTaskRunning = true;
+                    await this.showGenerateModal(task.params.fileSelectInfo);
+                    this.isTaskRunning = false;
+                    this.runNextTask();
+                }, 100);
+            } else if (task.type === 'save') {
+                // 保存秒传链接
+                setTimeout(async () => {
+                    this.isTaskRunning = true;
+                    await this.saveLink(task.params.content);
+                    this.isTaskRunning = false;
+                    this.runNextTask();
+                }, 100);
+            }
+            //this.showToast("任务开始执行...", 'info');
+        }
+
+        //解析、添加并触发任务
+        //const fileSelectInfo = this.selector.getSelection();
+        addAndRunTask(taskType, params = {}) {
+            if (taskType == 'generate') {
+                // 获取选中文件
+                const fileSelectInfo = this.shareLinkManager.selector.getSelection();
+                if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                    this.showToast("请先选择文件", 'warning');
+                    return;
+                }
+                this.taskList.push({ type: 'generate', params: { fileSelectInfo } });
+            } else if (taskType == 'save') {
+                this.taskList.push({ type: 'save', params: { content: params.content } });
+            }
+            this.runNextTask();
+        }
+
         addButton() {
             const buttonExist = document.querySelector('.mfy-button-container');
             if (buttonExist) return;
@@ -1456,8 +1535,8 @@
             dropdown.style.minWidth = '120px';
             dropdown.style.overflow = 'hidden';
             dropdown.innerHTML = `
-                <div class="mfy-dropdown-item" data-action="generate">生成秒传连接</div>
-                <div class="mfy-dropdown-item" data-action="save">保存秒传连接</div>
+                <div class="mfy-dropdown-item" data-action="generate">生成秒传链接</div>
+                <div class="mfy-dropdown-item" data-action="save">保存秒传链接</div>
             `;
             const style = document.createElement('style');
             style.textContent = `
@@ -1474,7 +1553,7 @@
                 item.addEventListener('click', async () => {
                     const action = item.dataset.action;
                     if (action === 'generate') {
-                        await this.showGenerateModal();
+                        await this.addAndRunTask('generate');
                     } else if (action === 'save') {
                         await this.showSaveModal();
                     }
