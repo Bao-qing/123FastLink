@@ -92,7 +92,7 @@
             const data = await this.sendRequest("GET", "/b/api/file/list/new", urlParams);
             //console.log("[123FASTLINK] [PanApiClient]", "获取文件列表:", data.data.InfoList);
             console.log("[123FASTLINK] [PanApiClient]", "获取文件列表 ID：", parentFileId, "Page：", page);
-            return {data: {InfoList: data.data.InfoList}, total: data.data.Total};
+            return { data: { InfoList: data.data.InfoList }, total: data.data.Total };
             //return { data: { fileList: data.data.fileList } };
         }
 
@@ -118,13 +118,13 @@
                 }
             }
             this.progress = 100;
-            return {data: {InfoList}, total: total};
+            return { data: { InfoList }, total: total };
         }
 
         async getFileInfo(idList) {
-            const fileIdList = idList.map(fileId => ({fileId}));
-            const data = await this.sendRequest("POST", "/b/api/file/info", {}, JSON.stringify({fileIdList}));
-            return {data: {InfoList: data.data.infoList}};
+            const fileIdList = idList.map(fileId => ({ fileId }));
+            const data = await this.sendRequest("POST", "/b/api/file/info", {}, JSON.stringify({ fileIdList }));
+            return { data: { InfoList: data.data.infoList } };
         }
 
         async uploadRequest(fileInfo) {
@@ -328,6 +328,7 @@
             // this.selector = selector;
             this.progress = 0;
             this.progressDesc = "";
+            this.taskCancel = false; // 取消当前任务的请求标志
             this.getFileInfoBatchSize = GlobalConfig.getFileInfoBatchSize;
             this.getFileInfoDelay = GlobalConfig.getFileInfoDelay;
             this.getFolderInfoDelay = GlobalConfig.getFolderInfoDelay;
@@ -341,7 +342,7 @@
         }
 
         /**
-         * 获取指定文件夹ID下的所有文件信息
+         * 递归获取指定文件夹ID下的所有文件信息
          * @param {*} parentFileId
          * @param folderName
          * @param {*} total 仅用来计算进度
@@ -375,9 +376,19 @@
             console.log("[123FASTLINK] [ShareLinkManager]", "获取文件列表,ID:", parentFileId);
 
             const directoryFileInfo = allFileInfoList.filter(file => file.Type === 1);
+            // if (this.taskCancel) {
+            //     this.progressDesc = "任务已取消";
+            //     return;
+            // }
             for (const folder of directoryFileInfo) {
                 // 延时
                 await new Promise(resolve => setTimeout(resolve, this.getFolderInfoDelay));
+
+                // 任务取消，停止深入文件夹
+                if (this.taskCancel) {
+                    this.progressDesc = "任务已取消";
+                    return;
+                }
                 await this._getAllFileInfoByFolderId(folder.FileId, folderName + folder.FileName + "/", total * directoryFileInfo.length);
             }
             this.progress = progress + 100 / total;
@@ -488,6 +499,12 @@
                 const folderInfo = fileSelectFolderInfoList[i];
                 this.progress = Math.round((i / fileSelectFolderInfoList.length) * 100);
                 await new Promise(resolve => setTimeout(resolve, this.getFolderInfoDelay));
+                // 任务取消
+                if (this.taskCancel) {
+                    this.progressDesc = "任务已取消";
+                    return true; // 已经获取的文件保留
+                }
+
                 await this._getAllFileInfoByFolderId(folderInfo.FileId, folderInfo.FileName + "/", fileSelectFolderInfoList.length);
             }
             // 处理文件夹路径
@@ -638,6 +655,12 @@
                 console.log('[123FASTLINK] [ShareLinkManager]', '已保存:', fileInfo.fileName);
                 this.progress = Math.round((completed / total) * 100);
                 this.progressDesc = `正在保存第 ${completed} / ${total} 个文件...`;
+
+                // 任务取消
+                if (this.taskCancel) {
+                    this.progressDesc = "任务已取消";
+                    break;
+                }
             }
             // this.progress = 100;
             // this.progressDesc = "保存完成";
@@ -655,7 +678,7 @@
         }
 
         async saveShareLink(content) {
-            let saveResult = {success: [], failed: []};
+            let saveResult = { success: [], failed: [] };
             try {
                 // 尝试作为JSON解析
                 const jsonData = this.safeParse(content);
@@ -668,7 +691,7 @@
                 }
             } catch (error) {
                 console.error('保存失败:', error);
-                saveResult = {success: [], failed: []};
+                saveResult = { success: [], failed: [] };
             }
             return saveResult;
         }
@@ -800,9 +823,12 @@
             this.isProgressMinimized = false;
             this.minimizeWidgetId = 'progress-minimize-widget';
             // this.currentShareLink = ''; // 存储当前秒传链接
-            // taskList = [{type: 'generate'|'save', params: {}}]
+            // taskList = [{id: string, type: 'generate'|'save', params: {}}]
             this.taskList = []; // 任务列表
             this.isTaskRunning = false; // 任务是否在运行
+            this.taskIdCounter = 0; // 任务ID计数器
+            this.currentTask = null; // 当前正在执行的任务
+            // this.taskCancel = false; // 取消当前任务的请求标志
         }
 
         /**
@@ -885,8 +911,18 @@
                 .toast-shake {animation: toastShake 0.4s cubic-bezier(.36,.07,.19,.97) both, toastSlideIn 0.3s ease-out;}
                 #progress-title { margin-bottom:16px; font-size:18px; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; }
                 #progress-desc { margin-top:8px; font-size:13px; color:#888; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; line-height: 1.4; }
+                .task-list-container { margin-top: 16px; }
+                .task-list-toggle { background: transparent; border: 1px solid #ddd; color: #666; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; width: 100%; text-align: left; display: flex; align-items: center; justify-content: space-between; transition: all 0.2s; }
+                .task-list-toggle:hover { background: #f5f5f5; border-color: #bbb; }
+                .task-list-toggle.active { background: #f0f8ff; border-color: #4CAF50; }
+                .task-list { max-height: 120px; overflow-y: auto; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 6px 6px; background: #fafafa; display: none; }
+                .task-list.show { display: block; }
+                .task-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+                .task-item:last-child { border-bottom: none; }
+                .task-item .task-name { color: #333; flex: 1; }
+                .task-item .task-remove { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; transition: background 0.2s; }
+                .task-item .task-remove:hover { background: #ff3742; }
                 @keyframes toastShake { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-8px); } 40%, 60% { transform: translateX(8px); } 100% { transform: translateX(0); }
-                }
                 `;
                 document.head.appendChild(style);
             }
@@ -1072,7 +1108,7 @@
 
         // 下载JSON文件
         downloadJsonFile(content, filename) {
-            const blob = new Blob([content], {type: 'application/json'});
+            const blob = new Blob([content], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -1142,7 +1178,7 @@
                         e.stopPropagation();
                         this.isProgressMinimized = true;
                         // 读取当前进度显示到浮动卡片
-                        const curTitle = modal.querySelector('#progress-title')?.innerText || title + (taskCount > 1 ? ` - 队列 ${1 + taskCount}` : '');
+                        const curTitle = modal.querySelector('#progress-title')?.innerText || title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '');
                         const curPercent = parseInt(modal.querySelector('#progress-percent')?.innerText || percent) || 0;
                         const curDesc = modal.querySelector('#progress-desc')?.innerText || desc;
                         this.removeProgressModalAndKeepState();
@@ -1153,7 +1189,7 @@
                 const titleElement = modal.querySelector('#progress-title');
                 const descElement = modal.querySelector('#progress-desc');
 
-                titleElement.innerText = title + (taskCount > 1 ? ` - 队列 ${1 + taskCount}` : '');
+                titleElement.innerText = title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '');
                 titleElement.style.cssText = 'margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
 
                 modal.querySelector('#progress-bar').style.width = percent + '%';
@@ -1161,6 +1197,112 @@
 
                 descElement.innerText = desc;
                 descElement.style.cssText = 'margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
+            }
+            // 更新任务列表
+            this.manageTaskList(modal);
+        }
+
+
+        /**
+         * 任务列表管理 - 统一处理任务列表的创建、更新和事件绑定
+         */
+        manageTaskList(modal) {
+            const existingContainer = modal.querySelector('.task-list-container');
+            const currentTaskCount = this.taskList.length;
+
+            // 没有任务时删除任务列表
+            if (currentTaskCount === 0) {
+                existingContainer?.remove();
+                return;
+            }
+
+            // 生成任务列表HTML
+            const generateHtml = () => `
+                <div class="task-list-container">
+                    <button class="task-list-toggle" id="task-list-toggle">
+                        <span>任务队列 (${currentTaskCount})</span>
+                        <span>▼</span>
+                    </button>
+                    <div class="task-list" id="task-list">
+                        ${this.taskList.map(task => {
+                            const isCurrentTask = this.currentTask && this.currentTask.id === task.id;
+                            const taskStatus = isCurrentTask ? ' (执行中)' : '';
+                            const taskClass = isCurrentTask ? ' style="background: #e8f5e8; border-left: 3px solid #4CAF50;"' : '';
+                            return `
+                                <div class="task-item" data-task-id="${task.id}"${taskClass}>
+                                    <span class="task-name">${task.type === 'generate' ? '链接生成' : '链接转存'}${taskStatus}</span>
+                                    <button class="task-remove" data-task-id="${task.id}">删除</button>
+                                </div>
+                            `;
+                            //<button class="task-remove" data-task-id="${task.id}" ${isCurrentTask ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>删除</button>
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+
+            // 绑定事件
+            const bindEvents = (container) => {
+                const toggle = container.querySelector('#task-list-toggle');
+                const taskList = container.querySelector('#task-list');
+
+                // 切换展开/收起
+                toggle?.addEventListener('click', () => {
+                    const isShown = taskList.classList.toggle('show');
+                    toggle.classList.toggle('active', isShown);
+                    toggle.querySelector('span:last-child').textContent = isShown ? '▲' : '▼';
+                });
+
+                // 删除任务
+                container.querySelectorAll('.task-remove').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const taskId = btn.dataset.taskId;
+                        // 防止删除正在执行的任务
+                        if (this.currentTask && this.currentTask.id.toString() === taskId) {
+                            this.showToast('正在中断任务', 'warning');
+                            this.cancelCurrentTask(); 
+                            return;
+                        }
+                        this.taskList = this.taskList.filter(task => task.id.toString() !== taskId);
+                        this.manageTaskList(modal);
+                        this.showToast('任务已取消', 'info');
+                    });
+                });
+            };
+
+            if (!existingContainer) {
+                // 创建
+                const progressDesc = modal.querySelector('#progress-desc');
+                progressDesc.insertAdjacentHTML('afterend', generateHtml());
+                bindEvents(modal.querySelector('.task-list-container'));
+            } else {
+                // 检查是否需要重建（任务数量变化或当前任务状态变化）
+                const existingTaskItems = existingContainer.querySelectorAll('.task-item');
+                const hasCurrentTaskChanged = existingContainer.querySelector('.task-item[style*="background: #e8f5e8"]') ? 
+                    !this.currentTask : !!this.currentTask;
+                
+                if (existingTaskItems.length !== currentTaskCount || hasCurrentTaskChanged) {
+                    const wasExpanded = existingContainer.querySelector('.task-list').classList.contains('show');
+                    existingContainer.remove();
+
+                    const progressDesc = modal.querySelector('#progress-desc');
+                    progressDesc.insertAdjacentHTML('afterend', generateHtml());
+                    const newContainer = modal.querySelector('.task-list-container');
+                    bindEvents(newContainer);
+
+                    // 恢复展开状态
+                    if (wasExpanded) {
+                        const taskList = newContainer.querySelector('.task-list');
+                        const toggle = newContainer.querySelector('#task-list-toggle');
+                        taskList.classList.add('show');
+                        toggle.classList.add('active');
+                        toggle.querySelector('span:last-child').textContent = '▲';
+                    }
+                } else {
+                    // 只更新计数
+                    const toggleSpan = existingContainer.querySelector('#task-list-toggle span:first-child');
+                    if (toggleSpan) toggleSpan.textContent = `任务队列 (${currentTaskCount})`;
+                }
             }
         }
 
@@ -1221,7 +1363,7 @@
         }
 
         /**
-         * 启动生成链接程序，UI层面的生成入口
+         * 任务函数 - 启动生成链接，UI层面的生成入口
          * 包括UI进度条显示和轮询
          * @param {*} fileSelectInfo - 选中文件信息，来自selector
          */
@@ -1239,6 +1381,10 @@
             }, 500);
 
             const shareLink = await mgr.generateShareLink(fileSelectInfo);
+
+            // 清除任务取消标志
+            this.shareLinkManager.taskCancel = false;
+
             if (!shareLink) {
                 this.showToast("没有选择文件", 'warning');
                 clearInterval(poll);
@@ -1301,7 +1447,7 @@
         }
 
         /**
-         * 启动从输入的纯文本解析并保存秒传链接，UI层面的保存入口
+         * 任务函数 - 启动从输入的内容解析并保存秒传链接，UI层面的保存入口
          * @param {*} content - 输入内容（秒传链接或JSON）
          */
         async launchSaveLink(content) {
@@ -1316,6 +1462,10 @@
             }, 100);
 
             const saveResult = await this.shareLinkManager.saveShareLink(content);
+
+            // 清除任务取消标志
+            this.shareLinkManager.taskCancel = false;
+
             clearInterval(poll);
             this.hideProgressModal();
             this.showSaveResultsModal(saveResult);
@@ -1382,7 +1532,7 @@
 
                 modalOverlay.remove();
 
-                this.addAndRunTask('save', {content});
+                this.addAndRunTask('save', { content });
             });
 
             modalOverlay.addEventListener('click', (e) => {
@@ -1467,7 +1617,14 @@
         runNextTask() {
             if (this.isTaskRunning) return this.showToast("已添加到队列，稍后执行", 'info');
             if (this.taskList.length === 0) return null;
-            const task = this.taskList.shift();
+            
+            // 找到第一个未执行的任务
+            const task = this.taskList.find(t => !this.currentTask || t.id !== this.currentTask.id);
+            if (!task) return null;
+            
+            // 标记当前任务
+            this.currentTask = task;
+            
             // 执行任务
             if (task.type === 'generate') {
                 // 生成秒传链接
@@ -1475,6 +1632,9 @@
                     this.isTaskRunning = true;
                     await this.launchProgressModal(task.params.fileSelectInfo);
                     this.isTaskRunning = false;
+                    // 任务完成，从列表中移除
+                    this.taskList = this.taskList.filter(t => t.id !== task.id);
+                    this.currentTask = null;
                     this.runNextTask();
                 }, 100);
             } else if (task.type === 'save') {
@@ -1483,6 +1643,9 @@
                     this.isTaskRunning = true;
                     await this.launchSaveLink(task.params.content);
                     this.isTaskRunning = false;
+                    // 任务完成，从列表中移除
+                    this.taskList = this.taskList.filter(t => t.id !== task.id);
+                    this.currentTask = null;
                     this.runNextTask();
                 }, 100);
             }
@@ -1495,6 +1658,7 @@
          * @param params - 任务参数
          */
         addAndRunTask(taskType, params = {}) {
+            const taskId = ++this.taskIdCounter;
             if (taskType === 'generate') {
                 // 获取选中文件
                 const fileSelectInfo = this.selector.getSelection();
@@ -1502,11 +1666,19 @@
                     this.showToast("请先选择文件", 'warning');
                     return;
                 }
-                this.taskList.push({type: 'generate', params: {fileSelectInfo}});
+                this.taskList.push({ id: taskId, type: 'generate', params: { fileSelectInfo } });
             } else if (taskType === 'save') {
-                this.taskList.push({type: 'save', params: {content: params.content}});
+                this.taskList.push({ id: taskId, type: 'save', params: { content: params.content } });
             }
             this.runNextTask();
+        }
+
+        /** 任务取消
+         * @returns {boolean}
+        */
+        cancelCurrentTask() {
+            this.shareLinkManager.taskCancel = true;
+            return true;
         }
 
         addButton() {
@@ -1594,4 +1766,3 @@
     }
 
 })();
-
