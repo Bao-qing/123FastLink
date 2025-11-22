@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025.09.13.1
+// @version      2025.11.22.1
 // @description  Creat and save 123pan instant links.
 // @author       Baoqing
 // @author       Chaofan
@@ -220,72 +220,70 @@
         init() {
             if (this._inited) return;
             this._inited = true;
+
+            // 保存原始 createElement 方法
             const originalCreateElement = document.createElement;
             const self = this;
             document.createElement = function (tagName, options) {
                 const element = originalCreateElement.call(document, tagName, options);
-
+                if (!(tagName.toLowerCase() === 'input')) {
+                    return element;
+                }
                 const observer = new MutationObserver(() => {
-                    if (element.classList.contains('ant-table-row') && element.classList.contains('ant-table-row-level-0') && element.classList.contains('editable-row')) {
-                        const input = element.querySelector('input');
-                        if (input) {
-                            input.addEventListener('click', function () {
-                                const rowKey = element.getAttribute('data-row-key');
-                                if (self.isSelectAll) {
-                                    if (!this.checked) {
-                                        if (!self.unselectedRowKeys.includes(rowKey)) {
-                                            self.unselectedRowKeys.push(rowKey);
-                                        }
-                                    } else {
-                                        const idx = self.unselectedRowKeys.indexOf(rowKey);
-                                        if (idx > -1) {
-                                            self.unselectedRowKeys.splice(idx, 1);
-                                        }
-                                    }
-                                } else {
-                                    if (this.checked) {
-                                        if (!self.selectedRowKeys.includes(rowKey)) {
-                                            self.selectedRowKeys.push(rowKey);
-                                        }
-                                    } else {
-                                        const idx = self.selectedRowKeys.indexOf(rowKey);
-                                        if (idx > -1) {
-                                            self.selectedRowKeys.splice(idx, 1);
-                                        }
-                                    }
-                                }
-                                self._outputSelection();
-                            });
-                        }
-                        observer.disconnect();
-                    } else if (// 检查是否为全选框并绑定事件
-                        element.classList.contains('ant-checkbox-input') && element.getAttribute('aria-label') === 'Select all') {
-                        // 新建全选框时 如果父元素<span>没有ant-checkbox-indeterminate或ant-checkbox-checked的class值
-                        // 则是切换页面而非点击刷新按钮，或者没有选择，此时所有清除选择缓存。
-                        if (!(element.parentElement.classList.contains('ant-checkbox-indeterminate') || element.parentElement.classList.contains('ant-checkbox-checked'))) {
+                    if (element.classList.contains('ant-checkbox-input')) {
+                        if (
+                            // 检查是否为全选框并绑定事件
+                            element.getAttribute('aria-label') === 'Select all'
+                        ) {
+                            // 新建全选框，新页面，清除已选择
                             self.unselectedRowKeys = [];
                             self.selectedRowKeys = [];
                             self.isSelectAll = false;
-                        }
-                        self._bindSelectAllEvent(element);
-                        console.log('[123FASTLINK] [Selector] 已为全选框绑定事件');
-                    } else if (// 取消选择按钮
-                        element.classList.contains('ant-btn') && element.classList.contains('ant-btn-link') && element.classList.contains('ant-btn-color-link') && element.classList.contains('ant-btn-variant-link') && element.classList.contains('mfy-button')) {
-                        element.addEventListener('click', function () {
-                            self.selectedRowKeys = [];
-                            self.unselectedRowKeys = [];
-                            self.isSelectAll = false;
-                            self._outputSelection && self._outputSelection();
-                        });
-                    }
 
+                            self._bindSelectAllEvent(element);
+                            console.log('[123FASTLINK] [Selector] 已为全选框绑定事件');
+                        } else {
+                            {
+                                const input = element
+                                input.addEventListener('click', function () {
+                                    const rowKey = input.closest('.ant-table-row').getAttribute('data-row-key');
+                                    if (self.isSelectAll) {
+                                        if (!this.checked) {
+                                            if (!self.unselectedRowKeys.includes(rowKey)) {
+                                                self.unselectedRowKeys.push(rowKey);
+                                            }
+                                        } else {
+                                            const idx = self.unselectedRowKeys.indexOf(rowKey);
+                                            if (idx > -1) {
+                                                self.unselectedRowKeys.splice(idx, 1);
+                                            }
+                                        }
+                                    } else {
+                                        if (this.checked) {
+                                            if (!self.selectedRowKeys.includes(rowKey)) {
+                                                self.selectedRowKeys.push(rowKey);
+                                            }
+                                        } else {
+                                            const idx = self.selectedRowKeys.indexOf(rowKey);
+                                            if (idx > -1) {
+                                                self.selectedRowKeys.splice(idx, 1);
+                                            }
+                                        }
+                                    }
+                                    self._outputSelection();
+                                });
+                            }
+                        }
+                    }
+                    observer.disconnect();
                 });
                 observer.observe(element, {
-                    attributes: true, attributeFilter: ['class', 'aria-label']
+                    attributes: true,
+                    attributeFilter: ['class', 'aria-label']
                 });
                 return element;
             };
-            console.log('[123FASTLINK] [Selector] CreatElement监听已激活');
+            console.log('[123FASTLINK] [Selector] HOOK已激活');
         }
 
         _bindSelectAllEvent(checkbox) {
@@ -308,12 +306,12 @@
         _outputSelection() {
             if (this.isSelectAll) {
                 if (this.unselectedRowKeys.length === 0) {
-                    console.log('[123FASTLINK] [Selector]', '全选');
+                    console.log('全选');
                 } else {
-                    console.log('[123FASTLINK] [Selector]', '全选，反选这些：', this.unselectedRowKeys);
+                    console.log('全选，反选这些：', this.unselectedRowKeys);
                 }
             } else {
-                console.log('[123FASTLINK] [Selector]', '当前选中：', this.selectedRowKeys);
+                console.log('当前选中：', this.selectedRowKeys);
             }
         }
 
