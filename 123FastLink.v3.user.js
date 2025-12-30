@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025.11.22.1
+// @version      2025.12.30.1
 // @description  Creat and save 123pan instant links.
 // @author       Baoqing
 // @author       Chaofan
@@ -215,6 +215,7 @@
             this.unselectedRowKeys = [];
             this.isSelectAll = false;
             this._inited = false;
+            this.currenthomeFilePath = window.sessionStorage.filePath;
         }
 
         init() {
@@ -246,6 +247,13 @@
                             {
                                 const input = element
                                 input.addEventListener('click', function () {
+                                    // 检查homeFilePath是否改变，如改变，要清除已选择
+                                    if (self.currenthomeFilePath !== window.sessionStorage.filePath) {
+                                        self.currenthomeFilePath = window.sessionStorage.filePath;
+                                        self.unselectedRowKeys = [];
+                                        self.selectedRowKeys = [];
+                                        self.isSelectAll = false;
+                                    }
                                     const rowKey = input.closest('.ant-table-row').getAttribute('data-row-key');
                                     if (self.isSelectAll) {
                                         if (!this.checked) {
@@ -316,6 +324,12 @@
         }
 
         getSelection() {
+            if (this.currenthomeFilePath !== window.sessionStorage.filePath) {
+                this.currenthomeFilePath = window.sessionStorage.filePath;
+                this.unselectedRowKeys = [];
+                this.selectedRowKeys = [];
+                this.isSelectAll = false;
+            }
             return {
                 isSelectAll: this.isSelectAll,
                 selectedRowKeys: [...this.selectedRowKeys],
