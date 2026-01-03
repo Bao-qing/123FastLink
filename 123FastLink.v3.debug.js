@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025.8.26.1
+// @version      2026.1.01.1
 // @description  Creat and save 123pan instant links.
 // @author       Baoqing
 // @author       Chaofan
@@ -16,7 +16,7 @@
 (function () {
     'use strict';
     const GlobalConfig = {
-        scriptVersion: "3.0.1",
+        scriptVersion: "3.1.1",
         usesBase62EtagsInExport: true,
         getFileListPageDelay: 500,
         getFileInfoBatchSize: 100,
@@ -894,28 +894,63 @@
             this.taskIdCounter = 0; // 任务ID计数器
             this.currentTask = null; // 当前正在执行的任务
             // this.taskCancel = false; // 取消当前任务的请求标志
+            this.iconLibrary = {
+                transfer: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>`,
+                generate: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                            <polyline points="13 2 13 9 20 9"></polyline>
+                        </svg>`,
+                save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>`
+            };
         }
 
         /**
          * 初始化UI管理器，插入样式表，设置按钮事件
          */
         init() {
-
-            const triggerUrlChange = () => {
-                setTimeout(() => this.addButton(), 10);
-            };
-
+            // 按钮插入 ==========================================
+            const features = [
+                {
+                    iconKey: 'generate',
+                    text: '生成秒传链接',
+                    handler: () => this.addAndRunTask('generate')
+                },
+                {
+                    iconKey: 'save',
+                    text: '保存秒传链接',
+                    handler: () => this.showInputModal()
+                }
+            ];
+            
+            // 页面加载完成后插入样式表和添加按钮
             window.addEventListener('load', () => {
                 this.insertStyle();
-                this.addButton();
+                this.addButton(
+                    features
+                );
             });
+            
+            // 监听URL变化，重新添加按钮，防止切换页面后按钮消失 =======
+
+            const triggerUrlChange = () => {
+                setTimeout(() => this.addButton(
+                    features
+                ), 10);
+            };
 
             const originalPushState = history.pushState;
             const originalReplaceState = history.replaceState;
 
             history.pushState = function () {
                 originalPushState.apply(this, arguments);
-                triggerUrlChange(); // 直接调用已绑定的函数
+                triggerUrlChange();
             };
 
             history.replaceState = function () {
@@ -934,79 +969,854 @@
                 let style = document.createElement("style");
                 style.id = "modal-style";
                 style.innerHTML = `
-                .modal-overlay { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); justify-content: center; align-items: center; z-index: 10000; animation: fadeIn 0.3s ease-out; }
-                .modal { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 8px 16px rgba(0, 0, 0, 0.1); text-align: center; width: 480px; max-width: 90vw; max-height: 90vh; overflow: hidden; position: relative; border: 1px solid rgba(255, 255, 255, 0.2); animation: modalSlideIn 0.3s ease-out; }
-                .close-btn { position: absolute; top: 16px; right: 16px; background: transparent; border: none; font-size: 24px; color: #999; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
-                .close-btn:hover { background: rgba(244, 67, 54, 0.1); color: #f44336; transform: scale(1.1); }
-                .modal textarea { width: 100%; padding: 16px; margin: 0 0 24px 0; border: 2px solid #e1e5e9; border-radius: 12px; resize: vertical; min-height: 120px; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 14px; line-height: 1.5; background: #fafbfc; transition: all 0.3s ease; box-sizing: border-box; outline: none; }
-                .modal textarea:focus { border-color: #4CAF50; background: #ffffff; box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1); transform: translateY(-2px); }
-                .modal textarea.drag-over { border-color: #4CAF50; background: #f0f8f0; }
-                .copy-btn { background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); color: white; border: none; padding: 14px 32px; cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 500; min-width: 120px; position: relative; overflow: hidden; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3); }
-                .copy-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(76, 175, 80, 0.4); }
-                .copy-btn:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3); }
-                .button-group { display: flex; gap: 12px; align-items: center; justify-content: center; position: relative; }
-                .copy-dropdown { position: relative; display: inline-block; }
-                .copy-dropdown-menu {position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #e1e5e9; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 120px; z-index: 10001; margin-top: 6px; padding: 0; display: none;}
-                .copy-dropdown:hover .copy-dropdown-menu, .copy-dropdown-menu:hover { display: block !important; }
-                .copy-dropdown-menu { bottom: 100% !important; top: auto !important; margin-bottom: 6px !important; margin-top: 0 !important; }
-                .copy-dropdown-menu::before { content: ''; position: absolute; bottom: -6px; left: 0; width: 100%; height: 6px; background: transparent; }
-                .copy-dropdown-item { padding: 10px 18px; cursor: pointer; font-size: 14px; border-bottom: 1px solid #f0f0f0; background: #fff; transition: background 0.2s;}
-                .copy-dropdown-item:last-child { border-bottom: none; }
-                .copy-dropdown-item:hover { background: #e8f5e9; color: #388e3c;}
-                .copy-dropdown-item:first-child { border-radius: 10px 10px 0 0; }
-                .copy-dropdown-item:last-child { border-radius: 0 0 10px 10px; }
-                .export-btn { background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); color: white; border: none; padding: 14px 24px; cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 500; min-width: 100px; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3); }
-                .export-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(33, 150, 243, 0.4); }
-                .file-input-btn { background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); color: white; border: none; padding: 14px 24px; cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 500; min-width: 100px; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3); }
-                .file-input-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(255, 152, 0, 0.4); }
+                :root {
+                    --primary-color: #6366f1;
+                    --primary-hover: #4f46e5;
+                    --secondary-color: #10b981;
+                    --secondary-hover: #059669;
+                    --danger-color: #ef4444;
+                    --danger-hover: #dc2626;
+                    --warning-color: #f59e0b;
+                    --warning-hover: #d97706;
+                    --info-color: #3b82f6;
+                    --info-hover: #2563eb;
+                    --background: #ffffff;
+                    --surface: #f8fafc;
+                    --border: #e2e8f0;
+                    --text-primary: #1e293b;
+                    --text-secondary: #64748b;
+                    --text-tertiary: #94a3b8;
+                    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+                    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+                    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+                    --radius-sm: 6px;
+                    --radius: 12px;
+                    --radius-lg: 16px;
+                    --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                .modal-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100vw;
+                    height: 100vh;
+                    background: rgba(0, 0, 0, 0.5);
+                    backdrop-filter: blur(8px);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 9999;
+                    animation: fadeIn 0.2s ease-out;
+                }
+
+                .modal {
+                    background: var(--background);
+                    border-radius: var(--radius-lg);
+                    box-shadow: var(--shadow-xl);
+                    width: 90%;
+                    max-width: 500px;
+                    max-height: 90vh;
+                    overflow: hidden;
+                    border: 1px solid var(--border);
+                    transform: translateY(0);
+                    animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                .modal-header {
+                    padding: 24px 24px 16px;
+                    border-bottom: 1px solid var(--border);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                }
+
+                .modal-title {
+                    font-size: 20px;
+                    font-weight: 600;
+                    color: var(--text-primary);
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .modal-title svg {
+                    width: 20px;
+                    height: 20px;
+                }
+
+                .modal-close {
+                    background: none;
+                    border: none;
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: var(--text-secondary);
+                    cursor: pointer;
+                    transition: var(--transition);
+                }
+
+                .modal-close:hover {
+                    background: var(--surface);
+                    color: var(--text-primary);
+                }
+
+                .modal-content {
+                    padding: 24px;
+                }
+
+                .modal-footer {
+                    padding: 16px 24px 24px;
+                    border-top: 1px solid var(--border);
+                    display: flex;
+                    gap: 12px;
+                    justify-content: flex-end;
+                }
+
                 .file-input { display: none; }
-                .toast { position: fixed; top: 20px; right: 20px; background: #fff; color: #333; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); z-index: 10002; font-size: 14px; max-width: 300px; animation: toastSlideIn 0.3s ease-out; }
-                .toast.success { border-left: 4px solid #4CAF50; }
-                .toast.error { border-left: 4px solid #f44336; }
-                .toast.warning { border-left: 4px solid #ff9800; }
-                .toast.info { border-left: 4px solid #2196F3; }
-                .progress-minimize-btn{position:absolute;left:-10px;top:-10px;width:30px;height:30px;border-radius:50%;background:#ffc504;color:#000000ff;border:none;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);z-index:10003}.progress-minimize-btn:hover{transform:scale(1.05)}
-                .minimized-widget{position:fixed;right:20px;bottom:20px;width:220px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:10px 12px;z-index:10005;display:flex;align-items:center;gap:10px;cursor:pointer}
-                .minimized-widget .mini-bar{flex:1}
-                .minimized-widget .mini-title{font-size:12px;color:#333;margin-bottom:6px}
-                .minimized-widget .mini-progress{height:8px;background:#eee;border-radius:6px;overflow:hidden}
-                .minimized-widget .mini-progress>i{display:block;height:100%;background:#4CAF50;width:0%;transition:width 0.2s}
-                .minimized-widget .mini-percent{font-size:12px;color:#666;width:36px;text-align:right}
-                .toast-shake {animation: toastShake 0.4s cubic-bezier(.36,.07,.19,.97) both, toastSlideIn 0.3s ease-out;}
-                #progress-title { margin-bottom:16px; font-size:18px; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; }
-                #progress-desc { margin-top:8px; font-size:13px; color:#888; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; line-height: 1.4; }
-                .task-list-container { margin-top: 16px; }
-                .task-list-toggle { background: transparent; border: 1px solid #ddd; color: #666; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; width: 100%; text-align: left; display: flex; align-items: center; justify-content: space-between; transition: all 0.2s; }
-                .task-list-toggle:hover { background: #f5f5f5; border-color: #bbb; }
-                .task-list-toggle.active { background: #f0f8ff; border-color: #4CAF50; }
-                .task-list { max-height: 120px; overflow-y: auto; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 6px 6px; background: #fafafa; display: none; }
-                .task-list.show { display: block; }
-                .task-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
-                .task-item:last-child { border-bottom: none; }
-                .task-item .task-name { color: #333; flex: 1; }
-                .task-item .task-remove { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; transition: background 0.2s; }
-                .task-item .task-remove:hover { background: #ff3742; }
-                @keyframes toastShake { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-8px); } 40%, 60% { transform: translateX(8px); } 100% { transform: translateX(0); }
-                `;
+
+                .file-list-container {
+                    background: var(--surface);
+                    border-radius: var(--radius);
+                    padding: 16px;
+                    margin-bottom: 20px;
+                    max-height: 200px;
+                    overflow-y: auto;
+                }
+
+                .file-list-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    margin-bottom: 12px;
+                }
+
+                .file-count {
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                    font-weight: 500;
+                }
+
+                .file-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .file-item {
+                    font-size: 13px;
+                    color: var(--text-primary);
+                    padding: 8px 12px;
+                    background: white;
+                    border-radius: var(--radius-sm);
+                    border: 1px solid var(--border);
+                    word-break: break-all;
+                    line-height: 1.4;
+                }
+
+                .modal textarea {
+                    width: 100%;
+                    min-height: 120px;
+                    padding: 16px;
+                    border: 2px solid var(--border);
+                    border-radius: var(--radius);
+                    background: var(--surface);
+                    color: var(--text-primary);
+                    font-family: 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
+                    font-size: 13px;
+                    line-height: 1.5;
+                    resize: vertical;
+                    transition: var(--transition);
+                    box-sizing: border-box;
+                }
+
+                .modal textarea:focus {
+                    outline: none;
+                    border-color: var(--primary-color);
+                    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+                }
+
+                .modal textarea.drag-over {
+                    border-color: var(--primary-color);
+                    background: rgba(99, 102, 241, 0.05);
+                }
+
+                .button-group {
+                    display: flex;
+                    gap: 12px;
+                    align-items: center;
+                }
+
+                .btn {
+                    padding: 10px 20px;
+                    border-radius: var(--radius);
+                    font-size: 14px;
+                    font-weight: 500;
+                    border: none;
+                    cursor: pointer;
+                    transition: var(--transition);
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 8px;
+                    min-width: 100px;
+                }
+
+                .btn:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+
+                .btn-primary {
+                    background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));
+                    color: white;
+                    box-shadow: var(--shadow);
+                }
+
+                .btn-primary:hover:not(:disabled) {
+                    transform: translateY(-1px);
+                    box-shadow: var(--shadow-lg);
+                }
+
+                .btn-secondary {
+                    background: linear-gradient(135deg, var(--secondary-color), var(--secondary-hover));
+                    color: white;
+                    box-shadow: var(--shadow);
+                }
+
+                .btn-secondary:hover:not(:disabled) {
+                    transform: translateY(-1px);
+                    box-shadow: var(--shadow-lg);
+                }
+
+                .btn-outline {
+                    background: white;
+                    color: var(--text-primary);
+                    border: 1px solid var(--border);
+                }
+
+                .btn-outline:hover:not(:disabled) {
+                    background: var(--surface);
+                    border-color: var(--text-secondary);
+                }
+
+                .btn-danger {
+                    background: var(--danger-color);
+                    color: white;
+                }
+
+                .btn-danger:hover:not(:disabled) {
+                    background: var(--danger-hover);
+                }
+
+                .dropdown {
+                    position: relative;
+                }
+
+                .dropdown-toggle {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+
+                .dropdown-menu {
+                    position: absolute;
+                    bottom: 100%;
+                    left: 0;
+                    background: white;
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius);
+                    box-shadow: var(--shadow-lg);
+                    min-width: 140px;
+                    z-index: 1001;
+                    margin-bottom: 8px;
+                    opacity: 0;
+                    transform: translateY(10px);
+                    visibility: hidden;
+                    transition: var(--transition);
+                }
+
+                .dropdown:hover .dropdown-menu {
+                    opacity: 1;
+                    transform: translateY(0);
+                    visibility: visible;
+                }
+
+                .dropdown-item {
+                    padding: 10px 16px;
+                    font-size: 13px;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    transition: var(--transition);
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .dropdown-item:hover {
+                    background: var(--surface);
+                }
+
+                .dropdown-item:first-child {
+                    border-radius: var(--radius) var(--radius) 0 0;
+                }
+
+                .dropdown-item:last-child {
+                    border-radius: 0 0 var(--radius) var(--radius);
+                }
+
+                .dropdown-divider {
+                    height: 1px;
+                    background: var(--border);
+                    margin: 4px 0;
+                }
+
+                .toast {
+                    position: fixed;
+                    top: 24px;
+                    right: 24px;
+                    background: white;
+                    color: var(--text-primary);
+                    padding: 12px 20px;
+                    border-radius: var(--radius);
+                    box-shadow: var(--shadow-lg);
+                    z-index: 10002;
+                    font-size: 14px;
+                    max-width: 320px;
+                    animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                    border-left: 4px solid var(--info-color);
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+                .toast.success {
+                    border-left-color: var(--secondary-color);
+                }
+
+                .toast.error {
+                    border-left-color: var(--danger-color);
+                }
+
+                .toast.warning {
+                    border-left-color: var(--warning-color);
+                }
+
+                .toast.info {
+                    border-left-color: var(--info-color);
+                }
+
+                .toast-icon {
+                    width: 20px;
+                    height: 20px;
+                }
+
+                .progress-modal {
+                    animation: modalSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                }
+
+                .progress-content {
+                    padding: 24px;
+                    text-align: center;
+                }
+
+                .progress-title {
+                    font-size: 18px;
+                    font-weight: 600;
+                    color: var(--text-primary);
+                    margin-bottom: 20px;
+                    word-break: break-all;
+                    line-height: 1.4;
+                }
+
+                .progress-bar-container {
+                    height: 8px;
+                    background: var(--surface);
+                    border-radius: 4px;
+                    overflow: hidden;
+                    margin-bottom: 12px;
+                }
+
+                .progress-bar {
+                    height: 100%;
+                    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+                    border-radius: 4px;
+                    transition: width 0.3s ease;
+                }
+
+                .progress-info {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    margin-bottom: 16px;
+                }
+
+                .progress-percent {
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: var(--primary-color);
+                }
+
+                .progress-desc {
+                    font-size: 13px;
+                    color: var(--text-secondary);
+                    text-align: left;
+                    background: var(--surface);
+                    padding: 12px;
+                    border-radius: var(--radius);
+                    margin-top: 16px;
+                    word-break: break-all;
+                    line-height: 1.4;
+                }
+
+                .progress-minimize-btn {
+                    position: absolute;
+                    top: 16px;
+                    right: 16px;
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 50%;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    color: var(--text-secondary);
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: var(--transition);
+                }
+
+                .progress-minimize-btn:hover {
+                    background: var(--border);
+                    color: var(--text-primary);
+                }
+
+                .minimized-widget {
+                    position: fixed;
+                    right: 24px;
+                    bottom: 24px;
+                    background: white;
+                    border-radius: var(--radius);
+                    box-shadow: var(--shadow-lg);
+                    padding: 12px 16px;
+                    z-index: 10005;
+                    min-width: 240px;
+                    cursor: pointer;
+                    transition: var(--transition);
+                    border: 1px solid var(--border);
+                }
+
+                .minimized-widget:hover {
+                    transform: translateY(-2px);
+                    box-shadow: var(--shadow-xl);
+                }
+
+                .widget-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    margin-bottom: 8px;
+                }
+
+                .widget-title {
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: var(--text-primary);
+                }
+
+                .widget-badge {
+                    background: var(--danger-color);
+                    color: white;
+                    font-size: 11px;
+                    font-weight: 600;
+                    padding: 2px 8px;
+                    border-radius: 10px;
+                }
+
+                .widget-progress {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+                .widget-bar {
+                    flex: 1;
+                    height: 4px;
+                    background: var(--surface);
+                    border-radius: 2px;
+                    overflow: hidden;
+                }
+
+                .widget-fill {
+                    height: 100%;
+                    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+                    border-radius: 2px;
+                }
+
+                .widget-percent {
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: var(--primary-color);
+                    min-width: 40px;
+                }
+
+                .task-list-container {
+                    margin-top: 20px;
+                }
+
+                .task-toggle {
+                    width: 100%;
+                    padding: 10px 16px;
+                    background: var(--surface);
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius);
+                    color: var(--text-secondary);
+                    font-size: 13px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    cursor: pointer;
+                    transition: var(--transition);
+                }
+
+                .task-toggle:hover {
+                    background: #f1f5f9;
+                }
+
+                .task-toggle.active {
+                    background: var(--primary-color);
+                    color: white;
+                    border-color: var(--primary-color);
+                }
+
+                .task-list {
+                    max-height: 160px;
+                    overflow-y: auto;
+                    border: 1px solid var(--border);
+                    border-top: none;
+                    border-radius: 0 0 var(--radius) var(--radius);
+                    background: white;
+                    display: none;
+                }
+
+                .task-list.show {
+                    display: block;
+                }
+
+                .task-item {
+                    padding: 12px 16px;
+                    border-bottom: 1px solid var(--border);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    transition: var(--transition);
+                }
+
+                .task-item:last-child {
+                    border-bottom: none;
+                }
+
+                .task-item.current {
+                    background: rgba(99, 102, 241, 0.05);
+                }
+
+                .task-info {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .task-icon {
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 50%;
+                }
+
+                .task-icon.generate {
+                    background: var(--secondary-color);
+                }
+
+                .task-icon.save {
+                    background: var(--info-color);
+                }
+
+                .task-icon.retry {
+                    background: var(--warning-color);
+                }
+
+                .task-name {
+                    font-size: 13px;
+                    color: var(--text-primary);
+                }
+
+                .task-status {
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                }
+
+                .task-remove {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 50%;
+                    border: none;
+                    background: var(--surface);
+                    color: var(--text-secondary);
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: var(--transition);
+                }
+
+                .task-remove:hover {
+                    background: var(--danger-color);
+                    color: white;
+                }
+
+                .task-remove:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+
+                .results-content {
+                    text-align: left;
+                }
+
+                .results-stats {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 16px;
+                    margin-bottom: 20px;
+                }
+
+                .stat-card {
+                    padding: 16px;
+                    border-radius: var(--radius);
+                    text-align: center;
+                }
+
+                .stat-card.success {
+                    background: rgba(16, 185, 129, 0.1);
+                    border: 1px solid rgba(16, 185, 129, 0.2);
+                }
+
+                .stat-card.failed {
+                    background: rgba(239, 68, 68, 0.1);
+                    border: 1px solid rgba(239, 68, 68, 0.2);
+                }
+
+                .stat-value {
+                    font-size: 24px;
+                    font-weight: 700;
+                    margin-bottom: 4px;
+                }
+
+                .stat-value.success {
+                    color: var(--secondary-color);
+                }
+
+                .stat-value.failed {
+                    color: var(--danger-color);
+                }
+
+                .stat-label {
+                    font-size: 12px;
+                    color: var(--text-secondary);
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+
+                .failed-list {
+                    max-height: 200px;
+                    overflow-y: auto;
+                    background: var(--surface);
+                    border-radius: var(--radius);
+                    padding: 12px;
+                }
+
+                .failed-item {
+                    padding: 8px 12px;
+                    background: white;
+                    border-radius: var(--radius-sm);
+                    border: 1px solid var(--border);
+                    margin-bottom: 8px;
+                    font-size: 12px;
+                }
+
+                .failed-item:last-child {
+                    margin-bottom: 0;
+                }
+
+                .failed-name {
+                    color: var(--text-primary);
+                    word-break: break-all;
+                }
+
+                .failed-error {
+                    color: var(--danger-color);
+                    font-size: 11px;
+                    margin-top: 4px;
+                }
+
+                .mfy-button-container {
+                    position: relative;
+                    display: inline-block;
+                }
+
+                .mfy-button {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 16px;
+                    background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));
+                    color: white;
+                    border: none;
+                    border-radius: var(--radius);
+                    font-size: 14px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    transition: var(--transition);
+                    box-shadow: var(--shadow);
+                }
+
+                .mfy-button:hover {
+                    transform: translateY(-1px);
+                    box-shadow: var(--shadow-lg);
+                }
+
+                .mfy-button svg {
+                    width: 16px;
+                    height: 16px;
+                }
+
+                .mfy-dropdown {
+                    position: absolute;
+                    top: calc(100% + 4px);
+                    left: 0;
+                    background: white;
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius);
+                    box-shadow: var(--shadow-lg);
+                    min-width: 160px;
+                    z-index: 1000;
+                    opacity: 0;
+                    transform: translateY(-10px);
+                    visibility: hidden;
+                    transition: var(--transition);
+                }
+
+                .mfy-button-container:hover .mfy-dropdown {
+                    opacity: 1;
+                    transform: translateY(0);
+                    visibility: visible;
+                }
+
+                .mfy-dropdown-item {
+                    padding: 10px 16px;
+                    font-size: 13px;
+                    color: var(--text-primary);
+                    cursor: pointer;
+                    transition: var(--transition);
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .mfy-dropdown-item:hover {
+                    background: var(--surface);
+                }
+
+                .mfy-dropdown-item:first-child {
+                    border-radius: var(--radius) var(--radius) 0 0;
+                }
+
+                .mfy-dropdown-item:last-child {
+                    border-radius: 0 0 var(--radius) var(--radius);
+                }
+
+                .mfy-dropdown-divider {
+                    height: 1px;
+                    background: var(--border);
+                    margin: 4px 0;
+                }
+
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+
+                @keyframes slideUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(20px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+
+                @keyframes slideInRight {
+                    from {
+                        opacity: 0;
+                        transform: translateX(100%);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateX(0);
+                    }
+                }
+
+                @keyframes modalSlideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateY(-20px) scale(0.95);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0) scale(1);
+                    }
+                }
+
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.5; }
+                }
+
+                .animate-pulse {
+                    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+                }
+            `;
                 document.head.appendChild(style);
             }
         }
-
         /**
-         * 显示提示消息（右上角）
-         * @param {*} message
-         * @param {*} type
-         * @param {*} duration
+         * 显示提示消息
          */
         showToast(message, type = 'info', duration = 3000) {
-            // this.insertStyle();
+            const icons = {
+                success: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+                error: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+                warning: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+                info: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+            };
+
             const toast = document.createElement('div');
-            toast.className = `toast ${type} toast-shake`; // 添加 toast-shake 类
-            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+            <div class="toast-icon">${icons[type]}</div>
+            <div>${message}</div>
+        `;
+
             document.body.appendChild(toast);
 
             setTimeout(() => {
-                toast.style.animation = 'toastSlideOut 0.3s ease-out forwards';
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100%)';
                 setTimeout(() => {
                     if (toast.parentNode) {
                         toast.parentNode.removeChild(toast);
@@ -1017,103 +1827,115 @@
 
         /**
          * 显示复制弹窗
-         * @param {*} defaultText
          */
         showCopyModal(defaultText = "") {
-            // this.insertStyle();
-            // this.currentShareLink = defaultText;
-            // let existingModal = document.getElementById('modal');
-            // if (existingModal) existingModal.remove();
+            const fileListHtml = Array.isArray(this.shareLinkManager.fileInfoList) &&
+                this.shareLinkManager.fileInfoList.length > 0 ? `
+            <div class="file-list-container">
+                <div class="file-list-header">
+                    <div class="file-count">文件列表（共${this.shareLinkManager.fileInfoList.length}个）</div>
+                </div>
+                <div class="file-list">
+                    ${this.shareLinkManager.fileInfoList.map(f => `
+                        <div class="file-item">${f.path}</div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
 
-            // 获取文件名列表
-            let fileListHtml = '';
-            if (Array.isArray(this.shareLinkManager.fileInfoList) && this.shareLinkManager.fileInfoList.length > 0) {
-                fileListHtml = `<div style="max-height:120px;overflow-y:auto;background:#f8f8f8;border-radius:6px;padding:8px 10px;margin-bottom:16px;text-align:left;font-size:13px;">
-                    <div style='color:#888;margin-bottom:4px;'>文件列表（共${this.shareLinkManager.fileInfoList.length}个）:</div>
-                    ${this.shareLinkManager.fileInfoList.map(f => `<div style='color:#333;word-break:break-all;margin:2px 0;'>${f.path}</div>`).join('')}
-                </div>`;
-            }
-
-            let modalOverlay = document.createElement('div');
+            const modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'modal';
             modalOverlay.innerHTML = `
-                <div class="modal">
-                    <button class="close-btn" onclick="document.getElementById('modal').remove()">×</button>
-                    <h3>🚀 秒传链接</h3>
+            <div class="modal">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>
+                        秒传链接
+                    </div>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-content">
                     ${fileListHtml}
                     <textarea id="copyText" placeholder="请输入或粘贴秒传链接...">${defaultText}</textarea>
-                    <div class="button-group">
-                        <div class="copy-dropdown">
-                            <button class="copy-btn" id="massageboxButton">
-                                复制 ▼
-                            </button>
-                            <div class="copy-dropdown-menu">
-                                <div class="copy-dropdown-item" data-type="json">复制JSON</div>
-                                <div class="copy-dropdown-item" data-type="text">复制纯文本</div>
+                </div>
+                <div class="modal-footer">
+                    <div class="dropdown">
+                        <button class="btn btn-primary dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            复制
+                        </button>
+                        <div class="dropdown-menu">
+                            <div class="dropdown-item" data-type="json">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path>
+                                    <path d="M18 14h-8"></path>
+                                    <path d="M15 18h-5"></path>
+                                    <path d="M10 6h8v4h-8V6Z"></path>
+                                </svg>
+                                复制JSON
+                            </div>
+                            <div class="dropdown-item" data-type="text">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="16 18 22 12 16 6"></polyline>
+                                    <polyline points="8 6 2 12 8 18"></polyline>
+                                </svg>
+                                复制纯文本
                             </div>
                         </div>
-                        <button class="export-btn" id="exportJsonButton">导出JSON</button>
                     </div>
+                    <button class="btn btn-secondary" id="exportJsonButton">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        导出JSON
+                    </button>
                 </div>
-            `;
-            // 导出JSON按钮事件
-            modalOverlay.querySelector('#exportJsonButton').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.exportJson();
-            })
-            // 下拉菜单悬停控制
-            const dropdown = modalOverlay.querySelector('.copy-dropdown');
-            const dropdownMenu = modalOverlay.querySelector('.copy-dropdown-menu');
-            let hideTimer;
+            </div>
+        `;
 
-            // 鼠标进入下拉容器时显示菜单
-            dropdown.addEventListener('mouseenter', () => {
-                clearTimeout(hideTimer);
-                dropdownMenu.style.display = 'block';
-            });
-
-            // 鼠标离开下拉容器时延迟隐藏菜单
-            dropdown.addEventListener('mouseleave', () => {
-                hideTimer = setTimeout(() => {
-                    dropdownMenu.style.display = 'none';
-                }, 300); // 300ms延迟，给用户足够时间移动鼠标
-            });
-
-            // 鼠标进入菜单时取消隐藏
-            dropdownMenu.addEventListener('mouseenter', () => {
-                clearTimeout(hideTimer);
-            });
-
-            // 鼠标离开菜单时隐藏
-            dropdownMenu.addEventListener('mouseleave', () => {
-                hideTimer = setTimeout(() => {
-                    dropdownMenu.style.display = 'none';
-                }, 100); // 稍微延迟避免误触
-            });
-
-            // 复制按钮点击直接复制纯文本
-            modalOverlay.querySelector('#massageboxButton').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.copyContent('text');
-            });
-
-            // 点击菜单项复制对应类型
-            modalOverlay.querySelectorAll('.copy-dropdown-item').forEach(item => {
+            // 复制菜单事件
+            const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
+            dropdownItems.forEach(item => {
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const type = item.dataset.type;
                     this.copyContent(type);
-                    clearTimeout(hideTimer);
-                    dropdownMenu.style.display = 'none'; // 点击后隐藏菜单
                 });
             });
 
+            // 主复制按钮事件
+            modalOverlay.querySelector('.dropdown-toggle').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.copyContent('text');
+            });
+
+            // 导出JSON按钮事件
+            modalOverlay.querySelector('#exportJsonButton').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.exportJson();
+            });
+
+            // 点击遮罩关闭
             modalOverlay.addEventListener('click', (e) => {
                 if (e.target === modalOverlay) modalOverlay.remove();
             });
 
             document.body.appendChild(modalOverlay);
+
+            // 自动聚焦文本域
             setTimeout(() => {
                 const textarea = modalOverlay.querySelector('#copyText');
                 if (textarea && !defaultText) textarea.focus();
@@ -1214,7 +2036,7 @@
          */
         updateProgressModal(title = "正在处理...", percent = 0, desc = "", taskCount = 1) {
             percent = Math.ceil(percent);
-            // 如果处于最小化状态，则展示/更新右下角浮动卡片并返回
+
             if (this.isProgressMinimized) {
                 this.updateMinimizedWidget(title, percent, desc, taskCount);
                 return;
@@ -1224,51 +2046,83 @@
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'progress-modal';
-                modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10001;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;';
+                modal.className = 'modal-overlay progress-modal';
                 modal.innerHTML = `
-                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;max-width:320px;text-align:center;">
-                        <button class="progress-minimize-btn" title="最小化">−</button>
-                        <div id="progress-title" style="margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;">${title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '')}</div>
-                        <div style="background:#eee;border-radius:8px;overflow:hidden;height:18px;">
-                            <div id="progress-bar" style="background:#4CAF50;height:18px;width:${percent}%;transition:width 0.2s;"></div>
+                <div class="modal" style="max-width: 400px;">
+                    <div class="modal-header">
+                        <div class="modal-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-pulse">
+                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                            </svg>
+                            ${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}
                         </div>
-                        <div id="progress-percent" style="margin-top:8px;font-size:14px;">${percent}%</div>
-                        <div id="progress-desc" style="margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;">${desc}</div>
+                        <button class="progress-minimize-btn" title="最小化">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="4 14 10 14 10 20"></polyline>
+                                <polyline points="20 10 14 10 14 4"></polyline>
+                                <line x1="14" y1="10" x2="21" y2="3"></line>
+                                <line x1="3" y1="21" x2="10" y2="14"></line>
+                            </svg>
+                        </button>
                     </div>
-                `;
+                    <div class="progress-content">
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progress-bar" style="width: ${percent}%"></div>
+                        </div>
+                        <div class="progress-info">
+                            <div class="progress-percent">${percent}%</div>
+                        </div>
+                        ${desc ? `<div class="progress-desc">${desc}</div>` : ''}
+                    </div>
+                </div>
+            `;
+
+                // 最小化按钮事件
+                const minimizeBtn = modal.querySelector('.progress-minimize-btn');
+                minimizeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.isProgressMinimized = true;
+                    this.removeProgressModalAndKeepState();
+                    this.updateMinimizedWidget(title, percent, desc, taskCount);
+                });
+
                 document.body.appendChild(modal);
-
-                // 绑定最小化按钮事件（点击后移除模态并创建右下角浮动卡片）
-                const btn = modal.querySelector('.progress-minimize-btn');
-                if (!btn.dataset.bound) {
-                    btn.dataset.bound = 'true';
-                    btn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        this.isProgressMinimized = true;
-                        // 读取当前进度显示到浮动卡片
-                        const curTitle = modal.querySelector('#progress-title')?.innerText || title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '');
-                        const curPercent = parseInt(modal.querySelector('#progress-percent')?.innerText || percent) || 0;
-                        const curDesc = modal.querySelector('#progress-desc')?.innerText || desc;
-                        this.removeProgressModalAndKeepState();
-                        this.updateMinimizedWidget(curTitle, curPercent, curDesc, taskCount);
-                    });
-                }
             } else {
-                const titleElement = modal.querySelector('#progress-title');
-                const descElement = modal.querySelector('#progress-desc');
+                const titleElement = modal.querySelector('.modal-title');
+                const barElement = modal.querySelector('#progress-bar');
+                const percentElement = modal.querySelector('.progress-percent');
+                const descElement = modal.querySelector('.progress-desc');
 
-                titleElement.innerText = title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '');
-                titleElement.style.cssText = 'margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
+                if (titleElement) {
+                    titleElement.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-pulse">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                    </svg>
+                    ${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}
+                `;
+                }
 
-                modal.querySelector('#progress-bar').style.width = percent + '%';
-                modal.querySelector('#progress-percent').innerText = percent + '%';
+                if (barElement) barElement.style.width = percent + '%';
+                if (percentElement) percentElement.textContent = percent + '%';
 
-                descElement.innerText = desc;
-                descElement.style.cssText = 'margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
+                if (desc) {
+                    if (!descElement) {
+                        const progressContent = modal.querySelector('.progress-content');
+                        const descDiv = document.createElement('div');
+                        descDiv.className = 'progress-desc';
+                        descDiv.textContent = desc;
+                        progressContent.appendChild(descDiv);
+                    } else {
+                        descElement.textContent = desc;
+                    }
+                } else if (descElement) {
+                    descElement.remove();
+                }
             }
-            // 更新任务列表
+
             this.manageTaskList(modal);
         }
+
 
 
         /**
@@ -1278,54 +2132,67 @@
             const existingContainer = modal.querySelector('.task-list-container');
             const currentTaskCount = this.taskList.length;
 
-            // 没有任务时删除任务列表
             if (currentTaskCount === 0) {
                 existingContainer?.remove();
                 return;
             }
 
-            // 生成任务列表HTML
             const generateHtml = () => `
-                <div class="task-list-container">
-                    <button class="task-list-toggle" id="task-list-toggle">
-                        <span>任务队列 (${currentTaskCount})</span>
-                        <span>▼</span>
-                    </button>
-                    <div class="task-list" id="task-list">
-                        ${this.taskList.map(task => {
+            <div class="task-list-container">
+                <button class="task-toggle" id="task-list-toggle">
+                    <span>任务队列 (${currentTaskCount})</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </button>
+                <div class="task-list" id="task-list">
+                    ${this.taskList.map(task => {
                 const isCurrentTask = this.currentTask && this.currentTask.id === task.id;
-                const taskStatus = isCurrentTask ? ' (执行中)' : '';
-                const taskClass = isCurrentTask ? ' style="background: #e8f5e8; border-left: 3px solid #4CAF50;"' : '';
-                return `
-                                <div class="task-item" data-task-id="${task.id}"${taskClass}>
-                                    <span class="task-name">${task.type === 'generate' ? '链接生成' : '链接转存'}${taskStatus}</span>
-                                    <button class="task-remove" data-task-id="${task.id}">删除</button>
-                                </div>
-                            `;
-                //<button class="task-remove" data-task-id="${task.id}" ${isCurrentTask ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>删除</button>
-            }).join('')}
-                    </div>
-                </div>
-            `;
+                const typeIcon = task.type === 'generate' ? 'generate' :
+                    task.type === 'save' ? 'save' : 'retry';
+                const typeText = task.type === 'generate' ? '生成' :
+                    task.type === 'save' ? '保存' : '重试';
 
-            // 绑定事件
+                return `
+                            <div class="task-item ${isCurrentTask ? 'current' : ''}" data-task-id="${task.id}">
+                                <div class="task-info">
+                                    <div class="task-icon ${typeIcon}"></div>
+                                    <div>
+                                        <div class="task-name">${typeText}秒传链接</div>
+                                        ${isCurrentTask ? '<div class="task-status">执行中...</div>' : ''}
+                                    </div>
+                                </div>
+                                <button class="task-remove" data-task-id="${task.id}" 
+                                    ${isCurrentTask ? 'disabled' : ''}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                            </div>
+                        `;
+            }).join('')}
+                </div>
+            </div>
+        `;
+
             const bindEvents = (container) => {
                 const toggle = container.querySelector('#task-list-toggle');
                 const taskList = container.querySelector('#task-list');
 
-                // 切换展开/收起
                 toggle?.addEventListener('click', () => {
                     const isShown = taskList.classList.toggle('show');
                     toggle.classList.toggle('active', isShown);
-                    toggle.querySelector('span:last-child').textContent = isShown ? '▲' : '▼';
+                    const svg = toggle.querySelector('svg');
+                    if (svg) {
+                        svg.style.transform = isShown ? 'rotate(180deg)' : 'rotate(0deg)';
+                    }
                 });
 
-                // 删除任务
                 container.querySelectorAll('.task-remove').forEach(btn => {
                     btn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         const taskId = btn.dataset.taskId;
-                        // 防止删除正在执行的任务
                         if (this.currentTask && this.currentTask.id.toString() === taskId) {
                             this.showToast('正在中断任务', 'warning');
                             this.cancelCurrentTask();
@@ -1339,34 +2206,32 @@
             };
 
             if (!existingContainer) {
-                // 创建
-                const progressDesc = modal.querySelector('#progress-desc');
-                progressDesc.insertAdjacentHTML('afterend', generateHtml());
+                const progressContent = modal.querySelector('.progress-content');
+                progressContent.insertAdjacentHTML('beforeend', generateHtml());
                 bindEvents(modal.querySelector('.task-list-container'));
             } else {
-                // 检查是否需要重建（任务数量变化或当前任务状态变化）
                 const existingTaskItems = existingContainer.querySelectorAll('.task-item');
-                const hasCurrentTaskChanged = existingContainer.querySelector('.task-item[style*="background: #e8f5e8"]') ? !this.currentTask : !!this.currentTask;
+                const hasCurrentTaskChanged = existingContainer.querySelector('.task-item.current') ?
+                    !this.currentTask : !!this.currentTask;
 
                 if (existingTaskItems.length !== currentTaskCount || hasCurrentTaskChanged) {
                     const wasExpanded = existingContainer.querySelector('.task-list').classList.contains('show');
                     existingContainer.remove();
 
-                    const progressDesc = modal.querySelector('#progress-desc');
-                    progressDesc.insertAdjacentHTML('afterend', generateHtml());
+                    const progressContent = modal.querySelector('.progress-content');
+                    progressContent.insertAdjacentHTML('beforeend', generateHtml());
                     const newContainer = modal.querySelector('.task-list-container');
                     bindEvents(newContainer);
 
-                    // 恢复展开状态
                     if (wasExpanded) {
                         const taskList = newContainer.querySelector('.task-list');
                         const toggle = newContainer.querySelector('#task-list-toggle');
                         taskList.classList.add('show');
                         toggle.classList.add('active');
-                        toggle.querySelector('span:last-child').textContent = '▲';
+                        const svg = toggle.querySelector('svg');
+                        if (svg) svg.style.transform = 'rotate(180deg)';
                     }
                 } else {
-                    // 只更新计数
                     const toggleSpan = existingContainer.querySelector('#task-list-toggle span:first-child');
                     if (toggleSpan) toggleSpan.textContent = `任务队列 (${currentTaskCount})`;
                 }
@@ -1390,33 +2255,35 @@
         // 创建或更新右下角最小化浮动进度条卡片
         updateMinimizedWidget(title = '正在处理...', percent = 0, desc = '', taskCount = 1) {
             let widget = document.getElementById(this.minimizeWidgetId);
-            // 红点提示，仅在剩余任务数>=2时显示
-            let redDotHtml = '';
-            if (this.taskList.length >= 1) {
-                redDotHtml = `<button class="mini-red-dot" style="position:absolute;left:-8px;top:-8px;width:22px;height:22px;background:#f44336;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;z-index:2;box-shadow:0 2px 6px rgba(0,0,0,0.12);">${this.taskList.length}</button>`;
-            }
+            const badgeHtml = this.taskList.length >= 1 ?
+                `<div class="widget-badge">${this.taskList.length}</div>` : '';
+
             const html = `
-                ${redDotHtml}
-                <div class="mini-bar">
-                    <div class="mini-title">${title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '')}</div>
-                    <div class="mini-progress"><i style="width:${percent}%"></i></div>
+            <div class="widget-header">
+                <div class="widget-title">${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}</div>
+                ${badgeHtml}
+            </div>
+            <div class="widget-progress">
+                <div class="widget-bar">
+                    <div class="widget-fill" style="width: ${percent}%"></div>
                 </div>
-                <div class="mini-percent">${percent}%</div>
-            `;
+                <div class="widget-percent">${percent}%</div>
+            </div>
+        `;
+
             if (!widget) {
                 widget = document.createElement('div');
                 widget.id = this.minimizeWidgetId;
                 widget.className = 'minimized-widget';
                 widget.innerHTML = html;
-                // 修复点击不灵敏：用mousedown替换click，并阻止冒泡
-                widget.addEventListener('mousedown', (e) => {
+
+                widget.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    e.preventDefault();
                     this.isProgressMinimized = false;
                     this.removeMinimizedWidget();
-                    // 重新显示模态，使用当前进度值
                     this.updateProgressModal(title, percent, desc, taskCount);
                 });
+
                 document.body.appendChild(widget);
             } else {
                 widget.innerHTML = html;
@@ -1468,64 +2335,105 @@
          * @returns {Promise<void>}
          */
         async showSaveResultsModal(result) {
-            // this.insertStyle();
-            // let existingModal = document.getElementById('results-modal');
-            // if (existingModal) existingModal.remove();
             const totalCount = result.success.length + result.failed.length;
             const successCount = result.success.length;
             const failedCount = result.failed.length;
-            let failedListHtml = '';
-            if (failedCount > 0) {
-                failedListHtml = `
-                    <div style="margin-top: 12px; color: #f44336; font-size: 14px;">
-                        <div style="margin-bottom: 6px;">失败文件列表：</div>
-                        <div style="max-height: 160px; overflow-y: auto; background: #f5f5f5; border-radius: 4px; padding: 8px;">
-                            ${result.failed.map(fileInfo => `<div style="font-size: 13px; color: #b71c1c; margin: 2px 0;">${fileInfo.fileName} ${fileInfo.error ? `<span style="color: #f44336;">(${fileInfo.error})</span>` : ''}</div>`).join('')}
-                        </div>
-                    </div>
-                `;
-            }
-            let modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'results-modal';
-            modalOverlay.innerHTML = `
-                <div class="modal">
-                    <button class="close-btn" onclick="document.getElementById('results-modal').remove()">×</button>
-                    <h3>📊 保存结果</h3>
-                    <div style="margin: 20px 0; text-align: left;">
-                        <div style="font-size: 16px; margin-bottom: 16px;">
-                            <span style="color: #666;">总计：</span><strong>${totalCount}</strong> 个文件
-                        </div>
-                        <div style="font-size: 16px; margin-bottom: 8px; color: #4CAF50;">
-                            ✅ 成功：<strong>${successCount}</strong> 个
-                        </div>
-                        <div style="font-size: 16px; margin-bottom: 8px; color: ${failedCount > 0 ? '#f44336' : '#666'};">
-                            ${failedCount > 0 ? '❌' : '✅'} 失败：<strong>${failedCount}</strong> 个
-                        </div>
-                        ${failedListHtml}
-                    </div>
-                    <div class="button-group">
-                        <button class="copy-btn" onclick="document.getElementById('results-modal').remove()">确定</button>
-                        ${failedCount > 0 ? `
-                <div class="copy-dropdown">
-                    <button class="file-input-btn" id="retryButton">重试失败 ▼</button>
-                    <div class="copy-dropdown-menu">
-                        <div class="copy-dropdown-item" data-action="retry">重试失败</div>
-                        <div class="copy-dropdown-item" data-action="export">导出失败链接</div>
-                    </div>
-                </div>` : ''}
-                    </div>
-                </div>
-            `;
 
-            // 添加重试和导出按钮事件
+            const failedListHtml = failedCount > 0 ? `
+            <div style="margin-top: 20px;">
+                <div style="font-size: 13px; font-weight: 500; color: var(--danger-color); margin-bottom: 8px;">
+                    失败文件列表
+                </div>
+                <div class="failed-list">
+                    ${result.failed.map(fileInfo => `
+                        <div class="failed-item">
+                            <div class="failed-name">${fileInfo.fileName}</div>
+                            ${fileInfo.error ? `<div class="failed-error">${fileInfo.error}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.innerHTML = `
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        保存结果
+                    </div>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-content results-content">
+                    <div class="results-stats">
+                        <div class="stat-card success">
+                            <div class="stat-value success">${successCount}</div>
+                            <div class="stat-label">成功</div>
+                        </div>
+                        <div class="stat-card failed">
+                            <div class="stat-value failed">${failedCount}</div>
+                            <div class="stat-label">失败</div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; font-size: 13px; color: var(--text-secondary); margin: 20px 0;">
+                        总计处理 <strong>${totalCount}</strong> 个文件
+                    </div>
+                    ${failedListHtml}
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">
+                        关闭
+                    </button>
+                    ${failedCount > 0 ? `
+                        <div class="dropdown">
+                            <button class="btn btn-secondary dropdown-toggle">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                                    <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+                                </svg>
+                                操作
+                            </button>
+                            <div class="dropdown-menu">
+                                <div class="dropdown-item" data-action="retry">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                        <path d="M3 3v5h5"></path>
+                                    </svg>
+                                    重试失败
+                                </div>
+                                <div class="dropdown-item" data-action="export">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                    导出失败链接
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
             if (failedCount > 0) {
-                const dropdownMenu = modalOverlay.querySelector('.copy-dropdown-menu');
-                dropdownMenu.querySelectorAll('.copy-dropdown-item').forEach(item => {
+                const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
+                dropdownItems.forEach(item => {
                     item.addEventListener('click', async () => {
                         const action = item.dataset.action;
+                        modalOverlay.remove();
+
                         if (action === 'retry') {
-                            document.getElementById('results-modal').remove();
                             this.addAndRunTask('retry', { fileList: result.failed });
                         } else if (action === 'export') {
                             const shareLink = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '');
@@ -1541,7 +2449,6 @@
 
             document.body.appendChild(modalOverlay);
         }
-
         /**
          * 任务函数 - 启动从输入的内容解析并保存秒传链接，UI层面的保存入口，retry为是可以重试失败的文件
          * @param {*} content - 输入内容（秒传链接/JSON）
@@ -1590,47 +2497,69 @@
          * 显示输入模态框
          */
         async showInputModal() {
-            // this.insertStyle();
-            let existingModal = document.getElementById('save-modal');
-            if (existingModal) existingModal.remove();
-
-            let modalOverlay = document.createElement('div');
+            const modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'save-modal';
             modalOverlay.innerHTML = `
-                <div class="modal">
-                    <button class="close-btn" onclick="document.getElementById('save-modal').remove()">×</button>
-                    <h3>📥 保存秒传链接</h3>
-                    <textarea id="saveText" placeholder="请输入或粘贴秒传链接，或拖入JSON文件导入..."></textarea>
-                    <div class="button-group">
-                        <button class="copy-btn" id="saveButton">保存</button>
-                        <button class="file-input-btn" id="selectFileButton">选择JSON</button>
-                        <input type="file" class="file-input" id="jsonFileInput" accept=".json">
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                        保存秒传链接
                     </div>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
-            `;
+                <div class="modal-content">
+                    <textarea id="saveText" placeholder="请输入或粘贴秒传链接，或将JSON文件拖拽到此处..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="saveButton">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>
+                        保存
+                    </button>
+                    <button class="btn btn-outline" id="selectFileButton">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                            <polyline points="13 2 13 9 20 9"></polyline>
+                        </svg>
+                        选择JSON
+                    </button>
+                    <input type="file" class="file-input" id="jsonFileInput" accept=".json">
+                </div>
+            </div>
+        `;
 
             const textarea = modalOverlay.querySelector('#saveText');
             const fileInput = modalOverlay.querySelector('#jsonFileInput');
             const selectFileBtn = modalOverlay.querySelector('#selectFileButton');
 
-            // 设置文件拖拽和选择
             this.setupFileDropAndInput(textarea, fileInput);
 
-            // 选择文件按钮
             selectFileBtn.addEventListener('click', () => {
                 fileInput.click();
             });
 
             modalOverlay.querySelector('#saveButton').addEventListener('click', async () => {
-                const content = document.getElementById("saveText").value;
-                if (!content.trim()) {
+                const content = textarea.value.trim();
+                if (!content) {
                     this.showToast("请输入秒传链接或导入JSON文件", 'warning');
                     return;
                 }
-
                 modalOverlay.remove();
-
                 this.addAndRunTask('save', { content });
             });
 
@@ -1639,8 +2568,8 @@
             });
 
             document.body.appendChild(modalOverlay);
+
             setTimeout(() => {
-                const textarea = modalOverlay.querySelector('#saveText');
                 if (textarea) textarea.focus();
             }, 100);
         }
@@ -1777,73 +2706,65 @@
             return true;
         }
 
-        addButton() {
+
+        addButton(features, options = {}) {
             const buttonExist = document.querySelector('.mfy-button-container');
             if (buttonExist) return;
-            const isFilePage = window.location.pathname === "/" && (window.location.search === "" || window.location.search.includes("homeFilePath"));
+
+            const isFilePage = window.location.pathname === "/" &&
+                (window.location.search === "" || window.location.search.includes("homeFilePath"));
             if (!isFilePage) return;
+
             const container = document.querySelector('.home-operator-button-group');
             if (!container) return;
+
             const btnContainer = document.createElement('div');
             btnContainer.className = 'mfy-button-container';
-            btnContainer.style.position = 'relative';
-            btnContainer.style.display = 'inline-block';
+
             const btn = document.createElement('button');
-            btn.className = 'ant-btn css-dev-only-do-not-override-168k93g ant-btn-default ant-btn-color-default ant-btn-variant-outlined mfy-button create-button';
-            btn.style.background = "#4CAF50";
-            btn.style.color = "#fff";
-            btn.style.border = "none";
-            btn.innerHTML = `<svg x="1753345987410" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2781" width="16" height="16"><path d="M395.765333 586.570667h-171.733333c-22.421333 0-37.888-22.442667-29.909333-43.381334L364.768 95.274667A32 32 0 0 1 394.666667 74.666667h287.957333c22.72 0 38.208 23.018667 29.632 44.064l-99.36 243.882666h187.050667c27.509333 0 42.186667 32.426667 24.042666 53.098667l-458.602666 522.56c-22.293333 25.408-63.626667 3.392-54.976-29.28l85.354666-322.421333z" fill="#ffffff" p-id="2782"></path></svg><span>秒传</span>`;
+            btn.className = 'ant-btn css-1bw9b22 ant-btn-primary ant-btn-variant-solid mfy-button upload-button'; // 利用现有样式
+            btn.style = "background-color: #5ebf70;";
+            btn.innerHTML = `${this.iconLibrary.transfer}<span>${options.buttonText || '秒传'}</span>`;
+
             const dropdown = document.createElement('div');
             dropdown.className = 'mfy-dropdown';
-            dropdown.style.display = 'none';
-            dropdown.style.position = 'absolute';
-            dropdown.style.top = 'calc(100% + 5px)';
-            dropdown.style.left = '0';
-            dropdown.style.backgroundColor = '#fff';
-            dropdown.style.border = '1px solid #d9d9d9';
-            dropdown.style.borderRadius = '10px';
-            dropdown.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
-            dropdown.style.zIndex = '1000';
-            dropdown.style.minWidth = '120px';
-            dropdown.style.overflow = 'hidden';
-            dropdown.innerHTML = `
-                <div class="mfy-dropdown-item" data-action="generate">生成秒传链接</div>
-                <div class="mfy-dropdown-item" data-action="save">保存秒传链接</div>
-            `;
-            const style = document.createElement('style');
-            style.textContent = `
-                .mfy-button-container:hover .mfy-dropdown { display: block !important; }
-                .mfy-dropdown-item { padding: 8px 12px; cursor: pointer; transition: background 0.3s; font-size: 14px; }
-                .mfy-dropdown-item:hover { background-color: #f5f5f5; }
-                .mfy-dropdown::before { content: ''; position: absolute; top: -5px; left: 0; width: 100%; height: 5px; background: transparent; }
-            `;
-            document.head.appendChild(style);
-            btnContainer.appendChild(btn);
-            btnContainer.appendChild(dropdown);
-            container.insertBefore(btnContainer, container.firstChild);
-            dropdown.querySelectorAll('.mfy-dropdown-item').forEach(item => {
-                item.addEventListener('click', async () => {
-                    const action = item.dataset.action;
-                    if (action === 'generate') {
-                        await this.addAndRunTask('generate');
-                    } else if (action === 'save') {
-                        await this.showInputModal();
+
+            // 根据功能列表创建下拉项
+            features.forEach(feature => {
+                const icon = this.iconLibrary[feature.iconKey] || feature.iconKey || '';
+                const itemElement = document.createElement('div');
+                itemElement.className = 'mfy-dropdown-item';
+                itemElement.innerHTML = `${icon}${feature.text}`;
+
+                itemElement.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    if (feature.handler && typeof feature.handler === 'function') {
+                        await feature.handler();
                     }
                     dropdown.style.display = 'none';
                 });
+
+                dropdown.appendChild(itemElement);
             });
-            btnContainer.addEventListener('mouseenter', function () {
+
+            btnContainer.appendChild(btn);
+            btnContainer.appendChild(dropdown);
+            container.insertBefore(btnContainer, container.firstChild);
+
+            // 下拉菜单交互逻辑
+            btnContainer.addEventListener('mouseenter', () => {
                 dropdown.style.display = 'block';
             });
-            btnContainer.addEventListener('mouseleave', function () {
-                let timer;
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    dropdown.style.display = 'none';
+
+            btnContainer.addEventListener('mouseleave', (e) => {
+                setTimeout(() => {
+                    if (!btnContainer.matches(':hover') && !dropdown.matches(':hover')) {
+                        dropdown.style.display = 'none';
+                    }
                 }, 300);
             });
         }
+
     }
 
     const apiClient = new PanApiClient();
