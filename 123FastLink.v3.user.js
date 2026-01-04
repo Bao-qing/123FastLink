@@ -1,45 +1,55 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2025.12.30.1
-// @description  Creat and save 123pan instant links.
+// @version      2026.1.01.1
+// @description  123云盘秒传链接脚本
 // @author       Baoqing
 // @author       Chaofan
 // @author       lipkiat
 // @match        *://*.123pan.com/*
 // @match        *://*.123pan.cn/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=123pan.com
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @license      MIT
 // ==/UserScript==
 
 
 (function () {
     'use strict';
-    const GlobalConfig = {
-        scriptVersion: "3.0.3",
-        usesBase62EtagsInExport: true,
-        getFileListPageDelay: 500,
-        getFileInfoBatchSize: 100,
-        getFileInfoDelay: 200,
-        getFolderInfoDelay: 300,
-        saveLinkDelay: 100,
-        mkdirDelay: 100,
-        scriptName: "123FASTLINKV3",
-        COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$"
+    var GlobalConfig = {
+        scriptVersion: "3.1.1",                     // 脚本版本
+        usesBase62EtagsInExport: true,              // 导出时使用Base62编码的etag
+        getFileListPageDelay: 500,                  // 获取文件列表每页延时
+        getFileInfoBatchSize: 100,                  // 批量获取文件信息的数量
+        getFileInfoDelay: 200,                      // 获取文件信息延时
+        getFolderInfoDelay: 300,                    // 获取文件夹信息延时
+        saveLinkDelay: 100,                         // 保存链接延时
+        mkdirDelay: 100,                            // 创建文件夹延时
+        scriptName: "123FASTLINKV3",                // 脚本名称
+        COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$",   // 通用路径链接前缀V2
+        MAX_TEXT_FILE_SIZE: 3 * 1024 * 1024,        // 文本文件最大3MB
+        DEFAULT_EXPORT_FILENAME: "123FastLink_Export", // 默认导出文件名
+        DEBUGMODE: false,
+        seedFilePathId: null                        // 种子文件路径ID
     };
 
     // 1. 123云盘API通信类
     class PanApiClient {
         constructor() {
+            this.init();
+        }
+
+        init() {
             this.host = 'https://' + window.location.host;
             this.authToken = localStorage['authorToken'];
             this.loginUuid = localStorage['LoginUuid'];
             this.appVersion = '3';
             this.referer = document.location.href;
             this.getFileListPageDelay = GlobalConfig.getFileListPageDelay;
+            this.maxTextFileSize = GlobalConfig.MAX_TEXT_FILE_SIZE;
             this.progress = 0;
             this.progressDesc = "";
-
         }
 
         buildURL(path, queryParams) {
@@ -127,7 +137,8 @@
             return { data: { InfoList: data.data.infoList } };
         }
 
-        async uploadRequest(fileInfo) {
+        // 尝试秒传
+        async fastUpload(fileInfo) {
             try {
                 const response = await this.sendRequest('POST', '/b/api/file/upload_request', {}, JSON.stringify({
                     ...fileInfo, RequestSource: null
@@ -135,17 +146,17 @@
                 const reuse = response['data']['Reuse'];
                 console.log('[123FASTLINK] [PanApiClient]', 'reuse：', reuse);
                 if (response['code'] !== 0) {
-                    return [false, response['message']];
+                    return [false, response['message'], null];
                 }
                 if (!reuse) {
                     console.error('[123FASTLINK] [PanApiClient]', '保存文件失败:', fileInfo.fileName, 'response:', response);
-                    return [false, "未能实现秒传"];
+                    return [false, "未能实现秒传", null];
                 } else {
-                    return [true, null];
+                    return [true, null, response['data']['Info']['FileId']];
                 }
             } catch (error) {
                 console.error('[123FASTLINK] [PanApiClient]', '上传请求失败:', error);
-                return [false, '请求失败'];
+                return [false, '请求失败', null];
             }
         }
 
@@ -157,12 +168,17 @@
             return parentFileId.toString();
         }
 
-        // 获取文件
+        /**
+         * 获取文件，尝试秒传
+         * @param {dict} fileInfo - 文件信息字典，包含 etag, fileName, size 字段
+         * @param {string} parentFileId 
+         * @returns [boolean, string] - [是否成功, 错误信息]
+         */
         async getFile(fileInfo, parentFileId) {
             if (!parentFileId) {
                 parentFileId = await this.getParentFileId();
             }
-            return await this.uploadRequest({
+            return await this.fastUpload({
                 driveId: 0,
                 etag: fileInfo.etag,
                 fileName: fileInfo.fileName,
@@ -206,6 +222,671 @@
                 'folderFileId': folderFileId, 'folderName': folderName, 'success': true
             };
         }
+
+
+        calculateStringSize(text) {
+            // 使用TextEncoder计算UTF-8编码的字节大小
+            const encoder = new TextEncoder();
+            return encoder.encode(text).length;
+        }
+
+        md5(inputString) {
+            var hc = "0123456789abcdef";
+            function rh(n) { var j, s = ""; for (j = 0; j <= 3; j++) s += hc.charAt((n >> (j * 8 + 4)) & 0x0F) + hc.charAt((n >> (j * 8)) & 0x0F); return s; }
+            function ad(x, y) { var l = (x & 0xFFFF) + (y & 0xFFFF); var m = (x >> 16) + (y >> 16) + (l >> 16); return (m << 16) | (l & 0xFFFF); }
+            function rl(n, c) { return (n << c) | (n >>> (32 - c)); }
+            function cm(q, a, b, x, s, t) { return ad(rl(ad(ad(a, q), ad(x, t)), s), b); }
+            function ff(a, b, c, d, x, s, t) { return cm((b & c) | ((~b) & d), a, b, x, s, t); }
+            function gg(a, b, c, d, x, s, t) { return cm((b & d) | (c & (~d)), a, b, x, s, t); }
+            function hh(a, b, c, d, x, s, t) { return cm(b ^ c ^ d, a, b, x, s, t); }
+            function ii(a, b, c, d, x, s, t) { return cm(c ^ (b | (~d)), a, b, x, s, t); }
+            function sb(x) {
+                var i; var nblk = ((x.length + 8) >> 6) + 1; var blks = new Array(nblk * 16); for (i = 0; i < nblk * 16; i++) blks[i] = 0;
+                for (i = 0; i < x.length; i++) blks[i >> 2] |= x.charCodeAt(i) << ((i % 4) * 8);
+                blks[i >> 2] |= 0x80 << ((i % 4) * 8); blks[nblk * 16 - 2] = x.length * 8; return blks;
+            }
+            var i, x = sb(inputString), a = 1732584193, b = -271733879, c = -1732584194, d = 271733878, olda, oldb, oldc, oldd;
+            for (i = 0; i < x.length; i += 16) {
+                olda = a; oldb = b; oldc = c; oldd = d;
+                a = ff(a, b, c, d, x[i + 0], 7, -680876936); d = ff(d, a, b, c, x[i + 1], 12, -389564586); c = ff(c, d, a, b, x[i + 2], 17, 606105819);
+                b = ff(b, c, d, a, x[i + 3], 22, -1044525330); a = ff(a, b, c, d, x[i + 4], 7, -176418897); d = ff(d, a, b, c, x[i + 5], 12, 1200080426);
+                c = ff(c, d, a, b, x[i + 6], 17, -1473231341); b = ff(b, c, d, a, x[i + 7], 22, -45705983); a = ff(a, b, c, d, x[i + 8], 7, 1770035416);
+                d = ff(d, a, b, c, x[i + 9], 12, -1958414417); c = ff(c, d, a, b, x[i + 10], 17, -42063); b = ff(b, c, d, a, x[i + 11], 22, -1990404162);
+                a = ff(a, b, c, d, x[i + 12], 7, 1804603682); d = ff(d, a, b, c, x[i + 13], 12, -40341101); c = ff(c, d, a, b, x[i + 14], 17, -1502002290);
+                b = ff(b, c, d, a, x[i + 15], 22, 1236535329); a = gg(a, b, c, d, x[i + 1], 5, -165796510); d = gg(d, a, b, c, x[i + 6], 9, -1069501632);
+                c = gg(c, d, a, b, x[i + 11], 14, 643717713); b = gg(b, c, d, a, x[i + 0], 20, -373897302); a = gg(a, b, c, d, x[i + 5], 5, -701558691);
+                d = gg(d, a, b, c, x[i + 10], 9, 38016083); c = gg(c, d, a, b, x[i + 15], 14, -660478335); b = gg(b, c, d, a, x[i + 4], 20, -405537848);
+                a = gg(a, b, c, d, x[i + 9], 5, 568446438); d = gg(d, a, b, c, x[i + 14], 9, -1019803690); c = gg(c, d, a, b, x[i + 3], 14, -187363961);
+                b = gg(b, c, d, a, x[i + 8], 20, 1163531501); a = gg(a, b, c, d, x[i + 13], 5, -1444681467); d = gg(d, a, b, c, x[i + 2], 9, -51403784);
+                c = gg(c, d, a, b, x[i + 7], 14, 1735328473); b = gg(b, c, d, a, x[i + 12], 20, -1926607734); a = hh(a, b, c, d, x[i + 5], 4, -378558);
+                d = hh(d, a, b, c, x[i + 8], 11, -2022574463); c = hh(c, d, a, b, x[i + 11], 16, 1839030562); b = hh(b, c, d, a, x[i + 14], 23, -35309556);
+                a = hh(a, b, c, d, x[i + 1], 4, -1530992060); d = hh(d, a, b, c, x[i + 4], 11, 1272893353); c = hh(c, d, a, b, x[i + 7], 16, -155497632);
+                b = hh(b, c, d, a, x[i + 10], 23, -1094730640); a = hh(a, b, c, d, x[i + 13], 4, 681279174); d = hh(d, a, b, c, x[i + 0], 11, -358537222);
+                c = hh(c, d, a, b, x[i + 3], 16, -722521979); b = hh(b, c, d, a, x[i + 6], 23, 76029189); a = hh(a, b, c, d, x[i + 9], 4, -640364487);
+                d = hh(d, a, b, c, x[i + 12], 11, -421815835); c = hh(c, d, a, b, x[i + 15], 16, 530742520); b = hh(b, c, d, a, x[i + 2], 23, -995338651);
+                a = ii(a, b, c, d, x[i + 0], 6, -198630844); d = ii(d, a, b, c, x[i + 7], 10, 1126891415); c = ii(c, d, a, b, x[i + 14], 15, -1416354905);
+                b = ii(b, c, d, a, x[i + 5], 21, -57434055); a = ii(a, b, c, d, x[i + 12], 6, 1700485571); d = ii(d, a, b, c, x[i + 3], 10, -1894986606);
+                c = ii(c, d, a, b, x[i + 10], 15, -1051523); b = ii(b, c, d, a, x[i + 1], 21, -2054922799); a = ii(a, b, c, d, x[i + 8], 6, 1873313359);
+                d = ii(d, a, b, c, x[i + 15], 10, -30611744); c = ii(c, d, a, b, x[i + 6], 15, -1560198380); b = ii(b, c, d, a, x[i + 13], 21, 1309151649);
+                a = ii(a, b, c, d, x[i + 4], 6, -145523070); d = ii(d, a, b, c, x[i + 11], 10, -1120210379); c = ii(c, d, a, b, x[i + 2], 15, 718787259);
+                b = ii(b, c, d, a, x[i + 9], 21, -343485551); a = ad(a, olda); b = ad(b, oldb); c = ad(c, oldc); d = ad(d, oldd);
+            }
+            return rh(a) + rh(b) + rh(c) + rh(d);
+        }
+
+
+        /**
+         * 第一步：上传请求
+         */
+        async uploadRequest(fileInfo) {
+            try {
+                const data = await this.sendRequest('POST', '/b/api/file/upload_request', {}, JSON.stringify({
+                    ...fileInfo,
+                    RequestSource: null
+                }));
+
+                console.log('[123FASTLINK] [文本上传]', 'upload_request响应:', data);
+
+                if (data.code !== 0) {
+                    return [false, data.message, null];
+                }
+
+                return [true, null, data.data];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [文本上传]', '上传请求失败:', error);
+                return [false, '上传请求失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 第二步：获取S3上传凭证
+         */
+        async getUploadAuth(bucket, key, uploadId, storageNode, partNumberStart = 1, partNumberEnd = 1) {
+            try {
+                const data = await this.sendRequest('POST', '/b/api/file/s3_upload_object/auth', {}, JSON.stringify({
+                    bucket: bucket,
+                    key: key,
+                    partNumberEnd: partNumberEnd.toString(),
+                    partNumberStart: partNumberStart.toString(),
+                    uploadId: uploadId,
+                    StorageNode: storageNode
+                }));
+
+                console.log('[123FASTLINK] [文本上传]', '获取上传凭证响应:', data);
+
+                if (data.code !== 0) {
+                    return [false, data.message, null];
+                }
+
+                const presignedUrls = data.data.presignedUrls;
+                const firstUrl = presignedUrls[partNumberStart.toString()];
+
+                if (!firstUrl) {
+                    return [false, '未获取到上传URL', null];
+                }
+
+                return [true, null, firstUrl];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [文本上传]', '获取上传凭证失败:', error);
+                return [false, '获取上传凭证失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 第三步：上传文本到S3
+         * 上传整个文本内容（非分片），不使用sendRequest
+         * @param {string} presignedUrl - 预签名URL
+         * @param {string} text - 要上传的文本内容
+         * @returns {Promise<Array>} [是否成功, 错误信息]
+         */
+        async uploadToS3Entire(presignedUrl, text) {
+            try {
+                // 将文本转换为Blob
+                const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+
+                console.log('[123FASTLINK] [文本上传]', '开始上传到S3:', presignedUrl);
+
+                // 移除 x-amz-acl 头，因为预签名URL通常已经包含了所有必要的认证信息
+                const response = await fetch(presignedUrl, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'text/plain;charset=utf-8'
+                        // 注意：不要添加 x-amz-acl，因为预签名URL已经包含了权限信息
+                    },
+                    body: blob
+                });
+
+                console.log('[123FASTLINK] [文本上传]', 'S3上传响应状态:', response.status, response.statusText);
+
+                if (response.ok || response.status === 200) {
+                    return [true, null];
+                } else {
+                    const errorText = await response.text();
+                    console.error('[123FASTLINK] [文本上传]', 'S3上传失败详情:', errorText);
+
+                    // 尝试不带Content-Type头再次上传（某些S3配置可能不需要）
+                    if (response.status === 403 || response.status === 400) {
+                        console.log('[123FASTLINK] [文本上传]', '尝试不带Content-Type头上传');
+                        const retryResponse = await fetch(presignedUrl, {
+                            method: 'PUT',
+                            body: blob
+                            // 完全不设置headers
+                        });
+
+                        if (retryResponse.ok || retryResponse.status === 200) {
+                            return [true, null];
+                        } else {
+                            const retryError = await retryResponse.text();
+                            return [false, `S3上传失败: ${response.status} ${response.statusText}, 重试: ${retryResponse.status} ${retryResponse.statusText}`];
+                        }
+                    }
+
+                    return [false, `S3上传失败: ${response.status} ${response.statusText}`];
+                }
+
+            } catch (error) {
+                console.error('[123FASTLINK] [文本上传]', 'S3上传失败:', error);
+                return [false, 'S3上传失败: ' + error.message];
+            }
+        }
+
+        /**
+         * 第四步：完成上传
+         */
+        async completeUpload(fileId, bucket, fileSize, key, uploadId, storageNode) {
+            try {
+                const data = await this.sendRequest('POST', '/b/api/file/upload_complete/v2', {}, JSON.stringify({
+                    fileId: fileId,
+                    bucket: bucket,
+                    fileSize: fileSize.toString(),
+                    key: key,
+                    isMultipart: false,  // 文本文件较小，单分片上传
+                    uploadId: uploadId,
+                    StorageNode: storageNode
+                }));
+
+                console.log('[123FASTLINK] [文本上传]', '完成上传响应:', data);
+
+                if (data.code !== 0) {
+                    return [false, data.message, null];
+                }
+
+                return [true, null, data.data];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [文本上传]', '完成上传失败:', error);
+                return [false, '完成上传失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 完整文本上传流程
+         * @param {string} fileName - 文件名
+         * @param {string} text - 要上传的文本内容
+         * @param {string|number} parentFileId - 父文件夹ID，可选
+         * @param {boolean} calculateMD5 - 是否计算MD5，默认true
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文件ID]
+         */
+        async uploadTextFile(fileName, text, parentFileId = 0) {
+            try {
+                console.log('[123FASTLINK] [文本上传]', '开始上传文本文件:', fileName);
+
+                // 1. 获取父文件夹ID
+                if (!parentFileId) {
+                    parentFileId = await this.getParentFileId();
+                }
+
+                // 2. 计算文件大小
+                const fileSize = this.calculateStringSize(text);
+                console.log('[123FASTLINK] [文本上传]', '文件大小:', fileSize, '字节');
+
+                // 3. 计算MD5
+                const md5 = this.md5(text);
+                console.log('[123FASTLINK] [文本上传]', '文件MD5:', md5);
+
+                // 4. 第一步：上传请求
+                console.log('[123FASTLINK] [文本上传]', '步骤1: 上传请求');
+                const [requestSuccess, requestError, uploadData] = await this.uploadRequest({
+                    driveId: 0,
+                    etag: md5,
+                    fileName: fileName,
+                    parentFileId: parentFileId,
+                    size: fileSize,
+                    type: 0,  // 0表示文件，1表示文件夹
+                    duplicate: 1,  // 1表示覆盖同名文件
+                    event: "homeUploadFile",  // 添加事件类型
+                    operateType: 1
+                });
+
+                if (!requestSuccess) {
+                    return [false, '上传请求失败: ' + requestError, null];
+                }
+
+                console.log('[123FASTLINK] [文本上传]', '上传请求数据:', uploadData);
+
+                // 5. 检查是否秒传
+                if (uploadData.Reuse) {
+                    console.log('[123FASTLINK] [文本上传]', '秒传成功，文件ID:', uploadData.FileId);
+                    return [true,
+                        "秒传成功",
+                        uploadData.FileId,
+                        {
+                            etag: md5,
+                            fileName: fileName,
+                            size: fileSize
+                        }];
+                }
+
+                // 6. 第二步：获取上传凭证
+                console.log('[123FASTLINK] [文本上传]', '步骤2: 获取上传凭证');
+                const [authSuccess, authError, presignedUrl] = await this.getUploadAuth(
+                    uploadData.Bucket,
+                    uploadData.Key,
+                    uploadData.UploadId,
+                    uploadData.StorageNode
+                );
+
+                if (!authSuccess) {
+                    return [false, '获取上传凭证失败: ' + authError, null];
+                }
+
+                console.log('[123FASTLINK] [文本上传]', '预签名URL:', presignedUrl);
+
+                // 7. 第三步：上传到S3
+                console.log('[123FASTLINK] [文本上传]', '步骤3: 上传到S3');
+                const [uploadSuccess, uploadError] = await this.uploadToS3Entire(presignedUrl, text);
+
+                if (!uploadSuccess) {
+                    return [false, 'S3上传失败: ' + uploadError, null];
+                }
+
+                console.log('[123FASTLINK] [文本上传]', 'S3上传成功');
+
+                // 8. 第四步：完成上传
+                console.log('[123FASTLINK] [文本上传]', '步骤4: 完成上传');
+                const [completeSuccess, completeError, completeData] = await this.completeUpload(
+                    uploadData.FileId,
+                    uploadData.Bucket,
+                    fileSize,
+                    uploadData.Key,
+                    uploadData.UploadId,
+                    uploadData.StorageNode
+                );
+
+                if (!completeSuccess) {
+                    return [false, '完成上传失败: ' + completeError, null];
+                }
+
+                console.log('[123FASTLINK] [文本上传]', '上传完成，文件ID:', uploadData.FileId);
+                return [true, "上传完成", uploadData.FileId,
+                    {
+                        etag: md5,
+                        fileName: fileName,
+                        size: fileSize
+                    }
+                ];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [文本上传]', '文本上传流程失败:', error);
+                return [false, '上传流程失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 创建文本文件（在指定文件夹中）
+         * @param {string} fileName - 文件名
+         * @param {string} text - 文本内容
+         * @param {string|number} folderId - 文件夹ID
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文件ID]
+         */
+        async createTextFileInFolder(fileName, text, folderId) {
+            return await this.uploadTextFile(fileName, text, folderId, true);
+        }
+
+        /**
+         * 在当前文件夹创建文本文件
+         * @param {string} fileName - 文件名
+         * @param {string} text - 文本内容
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文件ID]
+         */
+        async createTextFileInCurrentFolder(fileName, text) {
+            const parentFileId = await this.getParentFileId();
+            return await this.uploadTextFile(fileName, text, parentFileId, true);
+        }
+
+        /**
+     * 第一步：获取下载调度列表
+     * @param {Object} fileInfo - 文件信息
+     * @param {string} fileInfo.etag - 文件MD5
+     * @param {string|number} fileInfo.fileId - 文件ID
+     * @param {string} fileInfo.s3keyFlag - S3 Key标志
+     * @param {string} fileInfo.fileName - 文件名
+     * @param {string|number} fileInfo.size - 文件大小
+     * @returns {Promise<Array>} [是否成功, 错误信息, 调度数据]
+     */
+        async getDispatchList(fileInfo) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '获取下载调度列表，文件:', fileInfo.fileName);
+
+                const data = await this.sendRequest('POST', '/b/api/v2/file/download_info', {}, JSON.stringify({
+                    driveId: 0,
+                    etag: fileInfo.etag,
+                    fileId: fileInfo.fileId.toString(),
+                    s3keyFlag: fileInfo.s3keyFlag,
+                    type: 0,  // 0-文件
+                    fileName: fileInfo.fileName,
+                    size: fileInfo.size.toString()
+                }));
+
+                console.log('[123FASTLINK] [下载API]', '获取下载调度列表响应:', data);
+
+                if (data.code !== 0) {
+                    console.error('[123FASTLINK] [下载API]', '获取下载调度列表失败:', data.message);
+                    return [false, data.message, null];
+                }
+
+                return [true, null, data.data];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '获取下载调度列表异常:', error);
+                return [false, '获取下载调度列表失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 第二步：获取下载链接
+         * 随机选择一个下载线路，拼接完整下载链接
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} fileInfo.etag - 文件MD5
+         * @param {string|number} fileInfo.fileId - 文件ID
+         * @param {string} fileInfo.s3keyFlag - S3 Key标志
+         * @param {string} fileInfo.fileName - 文件名
+         * @param {string|number} fileInfo.size - 文件大小
+         * @param {string} preferredIsp - 优先选择的ISP线路（可选）
+         * @returns {Promise<Array>} [是否成功, 错误信息, 下载链接]
+         */
+        async getDownloadLink(fileInfo, preferredIsp = null) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '获取下载链接，文件:', fileInfo.fileName);
+
+                // 1. 获取调度列表
+                const [dispatchSuccess, dispatchError, dispatchData] = await this.getDispatchList(fileInfo);
+                if (!dispatchSuccess) {
+                    return [false, dispatchError, null];
+                }
+
+                const { dispatchList, downloadPath } = dispatchData;
+
+                if (!dispatchList || dispatchList.length === 0) {
+                    return [false, '没有可用的下载线路', null];
+                }
+
+                if (!downloadPath) {
+                    return [false, '没有获取到下载路径', null];
+                }
+
+                // 2. 选择下载线路
+                let selectedDispatch = null;
+
+                if (preferredIsp) {
+                    // 如果指定了优先线路，尝试匹配
+                    selectedDispatch = dispatchList.find(item => item.isp === preferredIsp);
+                }
+
+                // 如果没有匹配到指定线路，随机选择一个
+                if (!selectedDispatch) {
+                    const randomIndex = Math.floor(Math.random() * dispatchList.length);
+                    selectedDispatch = dispatchList[randomIndex];
+                }
+
+                console.log('[123FASTLINK] [下载API]', '选择的下载线路:', selectedDispatch.isp, 'URL前缀:', selectedDispatch.prefix);
+
+                // 3. 拼接完整的下载链接
+                // 确保前缀不以斜杠结尾，路径以斜杠开头
+                const cleanPrefix = selectedDispatch.prefix.endsWith('/')
+                    ? selectedDispatch.prefix.slice(0, -1)
+                    : selectedDispatch.prefix;
+                const cleanPath = downloadPath.startsWith('/')
+                    ? downloadPath
+                    : '/' + downloadPath;
+
+                const downloadLink = `${cleanPrefix}${cleanPath}`;
+
+                console.log('[123FASTLINK] [下载API]', '完整下载链接:', downloadLink);
+
+                return [true, null, {
+                    downloadLink,
+                    isp: selectedDispatch.isp,
+                    prefix: selectedDispatch.prefix,
+                    downloadPath,
+                    fileId: fileInfo.fileId,
+                    fileName: fileInfo.fileName
+                }];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '获取下载链接异常:', error);
+                return [false, '获取下载链接失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 第三步：获取链接文本内容
+         * 通过GET请求下载链接，返回文本内容
+         * @param {string} downloadLink - 下载链接
+         * @param {Object} options - 可选参数
+         * @param {number} options.timeout - 超时时间（毫秒），默认30000
+         * @param {boolean} options.includeHeaders - 是否包含响应头信息
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文本内容/响应数据]
+         */
+        async getLinkTextContent(downloadLink, options = {}) {
+            const {
+                timeout = 30000,
+                includeHeaders = false
+            } = options;
+
+            try {
+                console.log('[123FASTLINK] [下载API]', '获取链接文本内容:', downloadLink);
+
+                // 使用AbortController实现超时控制
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+                try {
+                    const response = await fetch(downloadLink, {
+                        method: 'GET',
+                        signal: controller.signal,
+                        headers: {
+                            'Accept': 'text/plain,text/html,application/json,*/*',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        }
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    console.log('[123FASTLINK] [下载API]', '响应状态:', response.status, response.statusText);
+
+                    if (!response.ok) {
+                        // 尝试获取更多错误信息
+                        let errorText = '';
+                        try {
+                            errorText = await response.text();
+                            console.error('[123FASTLINK] [下载API]', '错误响应内容:', errorText);
+                        } catch (e) {
+                            // 忽略读取错误
+                        }
+
+                        return [false, `HTTP ${response.status}: ${response.statusText}`, null];
+                    }
+
+                    // 获取响应头
+                    const headers = {};
+                    response.headers.forEach((value, key) => {
+                        headers[key] = value;
+                    });
+
+                    // 获取文本内容
+                    const textContent = await response.text();
+                    console.log('[123FASTLINK] [下载API]', '获取到文本内容，长度:', textContent.length, '字符');
+
+                    if (includeHeaders) {
+                        return [true, null, {
+                            content: textContent,
+                            headers: headers,
+                            status: response.status,
+                            statusText: response.statusText
+                        }];
+                    } else {
+                        return [true, null, textContent];
+                    }
+
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    throw fetchError;
+                }
+
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.error('[123FASTLINK] [下载API]', '请求超时:', timeout, 'ms');
+                    return [false, `请求超时 (${timeout}ms)`, null];
+                }
+
+                console.error('[123FASTLINK] [下载API]', '获取链接文本内容异常:', error);
+                return [false, '获取链接文本内容失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 完整的下载文本文件流程
+         * 整合上述三个步骤，从文件信息直接获取文本内容
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} fileInfo.etag - 文件MD5
+         * @param {string|number} fileInfo.fileId - 文件ID
+         * @param {string} fileInfo.s3keyFlag - S3 Key标志
+         * @param {string} fileInfo.fileName - 文件名
+         * @param {string|number} fileInfo.size - 文件大小
+         * @param {string} preferredIsp - 优先选择的ISP线路（可选）
+         * @param {Object} options - 可选参数
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文本内容]
+         */
+        async downloadTextFile(fileInfo, preferredIsp = null, options = {}) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '开始下载文本文件:', fileInfo.fileName);
+
+                // 1. 获取下载链接
+                console.log('[123FASTLINK] [下载API]', '步骤1: 获取下载链接');
+                const [linkSuccess, linkError, linkData] = await this.getDownloadLink(fileInfo, preferredIsp);
+                if (!linkSuccess) {
+                    return [false, '获取下载链接失败: ' + linkError, null];
+                }
+
+                const { downloadLink } = linkData;
+
+                // 2. 获取文本内容
+                console.log('[123FASTLINK] [下载API]', '步骤2: 获取文本内容');
+                const [contentSuccess, contentError, content] = await this.getLinkTextContent(downloadLink, options);
+
+                if (!contentSuccess) {
+                    return [false, '获取文本内容失败: ' + contentError, null];
+                }
+
+                console.log('[123FASTLINK] [下载API]', '下载完成，文件:', fileInfo.fileName);
+                return [true, null, content];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '下载文本文件流程异常:', error);
+                return [false, '下载文本文件失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 通过文件ID获取文件信息并下载
+         * 这是一个便捷方法，先通过fileId获取文件信息，然后下载
+         * @param {string|number} fileId - 文件ID
+         * @param {string} preferredIsp - 优先选择的ISP线路（可选）
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文本内容]
+         */
+        async downloadTextFileById(fileId, preferredIsp = null) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '通过文件ID下载文本文件:', fileId);
+
+                // 1. 先获取文件信息
+                const fileInfoResponse = await this.getFileInfo([fileId]);
+                // 检查文件大小
+                if (fileInfoResponse.data.InfoList[0].Size > this.maxTextFileSize) {
+                    return [false, `文件过大，无法作为文本下载（最大支持 ${this.maxTextFileSize} 字节）`, null];
+                }
+                if (!fileInfoResponse.data.InfoList || fileInfoResponse.data.InfoList.length === 0) {
+                    return [false, '文件不存在或无法访问', null];
+                }
+
+                const fileData = fileInfoResponse.data.InfoList[0];
+
+                // 2. 构建文件信息对象
+                const fileInfo = {
+                    fileId: fileData.FileId,
+                    etag: fileData.Etag,
+                    s3keyFlag: fileData.S3KeyFlag,
+                    fileName: fileData.FileName,
+                    size: fileData.Size
+                };
+
+                // 为防止非文本文件过大造成卡顿，对文件最大值进行限制
+                if (fileInfo.size > this.maxTextFileSize) {
+                    return [false, `文件过大，无法作为文本下载（最大支持 ${this.maxTextFileSize} 字节）`, null];
+                }
+                console.log('[123FASTLINK] [下载API]', '获取到文件信息:', fileInfo);
+
+                // 3. 下载文件
+                return await this.downloadTextFile(fileInfo, preferredIsp);
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '通过文件ID下载异常:', error);
+                return [false, '通过文件ID下载失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 下载文件并保存为Blob（适用于二进制文件）
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} preferredIsp - 优先选择的ISP线路
+         * @returns {Promise<Array>} [是否成功, 错误信息, Blob对象]
+         */
+        async downloadFileAsBlob(fileInfo, preferredIsp = null) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '下载文件为Blob:', fileInfo.fileName);
+
+                // 1. 获取下载链接
+                const [linkSuccess, linkError, linkData] = await this.getDownloadLink(fileInfo, preferredIsp);
+                if (!linkSuccess) {
+                    return [false, linkError, null];
+                }
+
+                const { downloadLink } = linkData;
+
+                // 2. 下载为Blob
+                const response = await fetch(downloadLink, {
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    }
+                });
+
+                if (!response.ok) {
+                    return [false, `HTTP ${response.status}: ${response.statusText}`, null];
+                }
+
+                const blob = await response.blob();
+                console.log('[123FASTLINK] [下载API]', '下载Blob完成，大小:', blob.size, '字节');
+
+                return [true, null, blob];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '下载文件为Blob异常:', error);
+                return [false, '下载文件失败: ' + error.message, null];
+            }
+        }
     }
 
     // 2. 选中文件管理类
@@ -215,7 +896,17 @@
             this.unselectedRowKeys = [];
             this.isSelectAll = false;
             this._inited = false;
-            this.currenthomeFilePath = window.sessionStorage.filePath;
+        }
+
+        // 暂时没有用到
+        deconstructor() {
+            if (this.observer) {
+                this.observer.disconnect();
+            }
+            this.observer = null;
+            if (this.originalCreateElement) {
+                document.createElement = this.originalCreateElement;
+            }
         }
 
         init() {
@@ -224,6 +915,8 @@
 
             // 保存原始 createElement 方法
             const originalCreateElement = document.createElement;
+            this.originalCreateElement = originalCreateElement;
+
             const self = this;
             document.createElement = function (tagName, options) {
                 const element = originalCreateElement.call(document, tagName, options);
@@ -247,13 +940,6 @@
                             {
                                 const input = element
                                 input.addEventListener('click', function () {
-                                    // 检查homeFilePath是否改变，如改变，要清除已选择
-                                    if (self.currenthomeFilePath !== window.sessionStorage.filePath) {
-                                        self.currenthomeFilePath = window.sessionStorage.filePath;
-                                        self.unselectedRowKeys = [];
-                                        self.selectedRowKeys = [];
-                                        self.isSelectAll = false;
-                                    }
                                     const rowKey = input.closest('.ant-table-row').getAttribute('data-row-key');
                                     if (self.isSelectAll) {
                                         if (!this.checked) {
@@ -295,10 +981,56 @@
         }
 
         _bindSelectAllEvent(checkbox) {
-            if (checkbox.dataset.selectAllBound) return;
-            checkbox.dataset.selectAllBound = 'true';
-            checkbox.addEventListener('click', () => {
-                if (checkbox.checked) {
+            // if (checkbox.dataset.selectAllBound) return;
+            // checkbox.dataset.selectAllBound = 'true';
+            // checkbox.addEventListener('change',  () => {
+            //     console.log('[123FASTLINK] [Selector] 全选框状态改变:', checkbox.checked);
+            //     if (checkbox.checked) {
+            //         this.isSelectAll = true;
+            //         this.unselectedRowKeys = [];
+            //         this.selectedRowKeys = [];
+            //     } else {
+            //         this.isSelectAll = false;
+            //         this.selectedRowKeys = [];
+            //         this.unselectedRowKeys = [];
+            //     }
+            // });
+            this._onSelectAllChange(checkbox);
+        }
+
+        _onSelectAllChange(checkbox) {
+            const targetElement = checkbox.parentElement;
+            const self = this;
+            // 创建观察器
+            this.observer = new MutationObserver(function (mutations) {
+                mutations.forEach(function (mutation) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                        console.log('Class changed!');
+                        console.log('旧值:', mutation.oldValue);
+                        console.log('新值:', targetElement.className);
+
+                        onClassChanged.call(self, targetElement);
+                    }
+                });
+            });
+
+            // 配置观察选项
+            const config = {
+                attributes: true,           // 监听属性变化
+                attributeOldValue: true,    // 记录旧值
+                attributeFilter: ['class']  // 只监听 class 属性
+            };
+
+            // 开始观察
+            this.observer.observe(targetElement, config);
+
+            // 处理函数
+            function onClassChanged(element) {
+                console.log('处理 class 变化:', element.className);
+                if (element.classList.contains('ant-checkbox-indeterminate')) {
+                    // 半选状态，不处理
+                } else if (element.classList.contains('ant-checkbox-checked')) {
+                    // 全选状态
                     this.isSelectAll = true;
                     this.unselectedRowKeys = [];
                     this.selectedRowKeys = [];
@@ -307,8 +1039,10 @@
                     this.selectedRowKeys = [];
                     this.unselectedRowKeys = [];
                 }
-                this._outputSelection();
-            });
+
+            }
+
+            // observer.disconnect();
         }
 
         _outputSelection() {
@@ -324,12 +1058,6 @@
         }
 
         getSelection() {
-            if (this.currenthomeFilePath !== window.sessionStorage.filePath) {
-                this.currenthomeFilePath = window.sessionStorage.filePath;
-                this.unselectedRowKeys = [];
-                this.selectedRowKeys = [];
-                this.isSelectAll = false;
-            }
             return {
                 isSelectAll: this.isSelectAll,
                 selectedRowKeys: [...this.selectedRowKeys],
@@ -342,7 +1070,11 @@
     class ShareLinkManager {
         constructor(apiClient) {
             this.apiClient = apiClient;
-            // this.selector = selector;
+            this.init();
+        }
+
+        init() {
+            this.apiClient.init();
             this.progress = 0;
             this.progressDesc = "";
             this.taskCancel = false; // 取消当前任务的请求标志
@@ -351,12 +1083,13 @@
             this.getFolderInfoDelay = GlobalConfig.getFolderInfoDelay;
             this.saveLinkDelay = GlobalConfig.saveLinkDelay;
             this.mkdirDelay = GlobalConfig.mkdirDelay;
-            this.fileInfoList = [];
+            this.fileInfoList = []; // TODO fileInfoList传递方式不合理
             // this.scriptName = GlobalConfig.scriptName,
             this.commonPath = "";
             this.COMMON_PATH_LINK_PREFIX_V2 = GlobalConfig.COMMON_PATH_LINK_PREFIX_V2;
             this.usesBase62EtagsInExport = GlobalConfig.usesBase62EtagsInExport;
             this.scriptVersion = GlobalConfig.scriptVersion;
+            this.defaultExportName = GlobalConfig.DEFAULT_EXPORT_FILENAME;
         }
 
         /**
@@ -562,10 +1295,16 @@
             // 获取选中的文件（文件夹）的详细信息
             // this.fileInfoList, this.commonPath
             const result = await this._getSelectedFilesInfo(fileSelectionDetails);
-            if (!result) return '';
+            if (!result) return [false, "未选择文件", ""];
             //// if (hasFolder) alert("文件夹暂时无法秒传，将被忽略");
+            let allFilePath = [];
+            for (const fileInfo of this.fileInfoList) {
+                if (fileInfo.type !== 1) {
+                    allFilePath.push(fileInfo.path);
+                }
+            }
             this.progressDesc = "秒传链接生成完成";
-            return this.buildShareLink(this.fileInfoList, this.commonPath);
+            return [...this.buildShareLink(this.fileInfoList, this.commonPath), allFilePath];
         }
 
         /**
@@ -579,17 +1318,24 @@
                 //}
             }).filter(Boolean).join('$');
             const shareLink = `${this.COMMON_PATH_LINK_PREFIX_V2}${commonPath}%${shareLinkFileInfo}`;
-            return shareLink;
+            return [true, null, shareLink];
+        }
+
+        _isValidEtag(etag) {
+            // 简单校验etag格式为32位十六进制字符串或Base62字符串
+            const hexRegex = /^[a-fA-F0-9]{32}$/;
+            const base62Regex = /^[A-Za-z0-9]{22}$/;
+            return hexRegex.test(etag) || base62Regex.test(etag);
         }
 
         /**
-         * 解析秒传链接
+         * 解析文本秒传链接
          * @param {*} shareLink     秒传链接
          * @param {*} InputUsesBase62  输入是否使用Base62
-         * @param {*} outputUsesBase62 输出是否使用Base62
+         * @param {*} outputUsesBase62 函数输出是否使用Base62，本脚本中使用hex传递，默认false
          * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
          */
-        _parseShareLink(shareLink, InputUsesBase62 = true, outputUsesBase62 = false) {
+        _parseTextShareLink(shareLink, InputUsesBase62 = true, outputUsesBase62 = false) {
             // Why use Base62 ???
             // 本脚本采用hex传递
             // 兼容旧版本，检查是否有链接头
@@ -605,7 +1351,7 @@
 
                 } else {
                     console.error('[123FASTLINK] [ShareLinkManager]', '不支持的公共路径格式', commonPathLinkPrefix);
-                    return "[123FASTLINK] [ShareLinkManager] 不支持的公共路径格式:" + commonPathLinkPrefix;
+                    return [false, '不支持的公共路径格式', null];
                 }
 
             } else {
@@ -615,16 +1361,68 @@
 
             const shareLinkList = Array.from(shareFileInfo.replace(/\r?\n/g, '$').split('$'));
             this.commonPath = commonPath;
-            return shareLinkList.map(singleShareLink => {
+            let failList = [];
+            const fileList = shareLinkList.map(singleShareLink => {
                 const singleFileInfoList = singleShareLink.split('#');
                 if (singleFileInfoList.length < 3) return null;
+                const etag = InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this._base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this._hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]);
+                let failed = false;
+                // etag校验
+                if (!this._isValidEtag(etag)) {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', etag);
+                    failed = true;
+                }
+                const size = singleFileInfoList[1];
+                if (isNaN(size) || Number(size) < 0) {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件大小:', size);
+                    failed = true;
+                }
+                if (!singleFileInfoList[2]) {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件路径:', singleFileInfoList[2]);
+                    failed = true;
+                }
+                if (failed) {
+                    failList.push({
+                        etag: etag,
+                        size: size,
+                        path: singleFileInfoList[2],
+                        fileName: singleFileInfoList[2].split('/').pop()
+                    });
+                    return null;
+                }
                 return {
-                    etag: InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this._base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this._hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]),
-                    size: singleFileInfoList[1],
+                    // etag: InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this._base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this._hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]),
+                    etag: etag,
+                    size: size,
                     path: singleFileInfoList[2],
                     fileName: singleFileInfoList[2].split('/').pop()
                 };
             }).filter(Boolean);
+            if (fileList.length === 0) {
+                return [false, '未解析到有效的文件信息', null, failList];
+            }
+            return [true, null, fileList, failList];
+        }
+
+        /**
+         * 自动判断秒传链接格式并解析
+         * @param {string} shareLink 
+         */
+        async parseShareLink(shareLink) {
+            let result = null;
+            try {
+                // 尝试作为JSON解析
+                const jsonData = this.safeParse(shareLink);
+                if (jsonData) {
+                    result = await this._parseJsonShareLink(jsonData);
+                } else {
+                    // 作为普通秒传链接处理
+                    result = await this._parseTextShareLink(shareLink, this.usesBase62EtagsInExport, false);
+                }
+            } catch (error) {
+                return [false, '保存失败: ' + error.message, result];
+            }
+            return result;
         }
 
         /**
@@ -740,51 +1538,172 @@
             };
         }
 
-        /**
-         * 保存秒传链接
-         */
-        async saveTextShareLink(shareLink) {
-            const shareFileList = this._parseShareLink(shareLink);
-            return this._saveFileList(await this._makeDirForFiles(shareFileList));
-        }
+        // /**
+        //  * 保存秒传链接
+        //  */
+        // async saveTextShareLink(shareLink) {
+        //     const shareFileList = this._parseTextShareLink(shareLink);
+        //     return this._saveFileList(await this._makeDirForFiles(shareFileList));
+        // }
+
+        // /**
+        //  * 保存JSON格式的秒传链接
+        //  * @param {string} jsonContent
+        //  * @returns {Promise<object>} - 保存结果
+        //  */
+        // async saveJsonShareLink(jsonContent) {
+        //     const shareFileList = this._parseJsonShareLink(jsonContent);
+        //     return this._saveFileList(await this._makeDirForFiles(shareFileList));
+        // }
 
         /**
-         * 保存JSON格式的秒传链接
-         * @param {string} jsonContent
+         *  保存秒传链接（自动判断格式）
+         * @param {string} content 
          * @returns {Promise<object>} - 保存结果
+         * {success: [], failed: []}
          */
-        async saveJsonShareLink(jsonContent) {
-            const shareFileList = this._parseJsonShareLink(jsonContent);
-            return this._saveFileList(await this._makeDirForFiles(shareFileList));
-        }
-
         async saveShareLink(content) {
             let saveResult = { success: [], failed: [] };
-            try {
-                // 尝试作为JSON解析
-                const jsonData = this.safeParse(content);
-                if (jsonData) {
-                    saveResult = await this.saveJsonShareLink(jsonData);
-                } else {
-                    // 作为普通秒传链接处理
-                    saveResult = await this.saveTextShareLink(content);
-                    console.log('保存结果:', saveResult);
-                }
-            } catch (error) {
-                console.error('保存失败:', error);
-                saveResult = { success: [], failed: [] };
+            // try {
+            //     // 尝试作为JSON解析
+            //     const jsonData = this.safeParse(content);
+            //     if (jsonData) {
+            //         saveResult = await this.saveJsonShareLink(jsonData);
+            //     } else {
+            //         // 作为普通秒传链接处理
+            //         saveResult = await this.saveTextShareLink(content);
+            //         console.log('保存结果:', saveResult);
+            //     }
+            // } catch (error) {
+            //     console.error('保存失败:', error);
+            //     saveResult = { success: [], failed: [] };
+            //     return [false, '保存失败: ' + error.message, saveResult];
+            // }
+            const fileInfoList = await this.parseShareLink(content);
+            if (!fileInfoList[0]) {
+                saveResult.failed.push(...fileInfoList[3]); // 添加解析失败的文件
+                return [false, '保存失败: ' + fileInfoList[1], saveResult];
             }
-            return saveResult;
+            saveResult = await this._saveFileList(await this._makeDirForFiles(fileInfoList[2]));
+            saveResult.failed.push(...fileInfoList[3]); // 添加解析失败的文件
+            return [true, null, saveResult];
+        }
+
+        async saveShareLinkOnlyText(shareLink, fileName) {
+            return this.apiClient.createTextFileInCurrentFolder(fileName, shareLink);
         }
 
         /**
          * 重试保存失败的文件
          * @param {*} FileList - 包含parentFolderId - {etag: string, size: number, path: string, fileName: string, parentFolderId: number}
-         * 失败的文件列表 - this.saveShareLink().failed
+         * 失败的文件列表 - this.saveShareLink()[2].failed
          * @returns
          */
         async retrySaveFailed(FileList) {
-            return this._saveFileList(FileList);
+            return [true, null, await this._saveFileList(FileList)];
+        }
+
+        // ------------------二级秒传链接相关----------------------
+        /**
+         * 获取文件内容为文本
+         * @param {string} fileId 
+         * @returns [boolean, string, string] - 是否成功, 错误信息, 文本内容
+         */
+        async getFileContentAsText(fileId) {
+            const fileTextInfo = await this.apiClient.downloadTextFileById(fileId);
+            if (!fileTextInfo[0]) {
+                return [false, fileTextInfo[1], null];
+            }
+            return [true, null, fileTextInfo[2]];
+        }
+
+        /**
+         * 从文本文件获取并保存秒传链接
+         * @param {string} fileId - 二级秒传链接文件ID
+         * @returns 
+         */
+        async saveShareLinkFile(fileId) {
+            const [downloadSuccess, downloadError, fileContent] = await this.getFileContentAsText(fileId);
+            if (!downloadSuccess) {
+                return [false, '获取文件内容失败: ' + downloadError, null];
+            }
+            return await this.saveShareLink(fileContent);
+        }
+
+        async saveSecondaryShareLink(secondaryLink, seedFilePathId = null) {
+
+            if (seedFilePathId && seedFilePathId.toString().length !== 8) {
+                return [false, '种子文件路径ID无效，请清除路径', null];
+            }
+            // 提取文件信息
+            const secondaryFileInfoRes = await this.parseShareLink(secondaryLink);
+            if (!secondaryFileInfoRes[0]) {
+                return [false, '解析二级秒传链接失败: ' + secondaryFileInfoRes[1], null];
+            }
+            const secondaryFileInfo = secondaryFileInfoRes[2];
+            if (secondaryFileInfo.length !== 1) {
+                return [false, '二级秒传链接格式错误，应该只包含一个文件', null];
+            }
+            // 保存文件（要先保存才能获取文件内容）
+            this.progress = 10;
+            this.progressDesc = "正在保存二级秒传链接文件...";
+            const saveResult = await this.apiClient.getFile({
+                etag: secondaryFileInfo[0].etag, size: secondaryFileInfo[0].size, fileName: secondaryFileInfo[0].fileName
+            }
+                , seedFilePathId);
+            if (!saveResult[0]) {
+                return [false, '保存二级秒传链接文件失败: ' + saveResult[1], null];
+            }
+            // 获取文件内容
+            this.progress = 50;
+            this.progressDesc = "正在获取二级秒传链接文件内容...";
+            const getResult = await this.getFileContentAsText(saveResult[2]);
+            const [downloadSuccess, downloadError, fileContent] = getResult;
+            if (!downloadSuccess) {
+                return [false, '获取文件内容失败: ' + downloadError, null];
+            }
+            this.progress = 70;
+            this.progressDesc = "正在保存秒传链接...";
+            return await this.saveShareLink(fileContent);
+        }
+
+        /**
+         * 
+         * @param {dict} fileSelectionDetails - 文件选择
+         * @param {*} fileName - 二级秒传链接文件名
+         * @returns 
+         */
+        async generateSecondaryShareLink(fileSelectionDetails, fileName, seedFilePathId = null) {
+            if (seedFilePathId && seedFilePathId.toString().length !== 8) {
+                return [false, '种子文件路径ID无效，请清除路径', null];
+            }
+            // 固定parentFolderId为当前文件夹,防止用户切换页面
+            let parentFolderId = null;
+            if (seedFilePathId) {
+                parentFolderId = seedFilePathId;
+            } else {
+                parentFolderId = await this.apiClient.getParentFileId();
+            }
+            // 先根据fileSelectionDetails 生成一级秒传链接
+            const [linkSuccess, linkError, shareLink] = await this.generateShareLink(fileSelectionDetails);
+            if (!linkSuccess) {
+                return [false, '生成一级秒传链接失败: ' + linkError, null];
+            }
+            // 判断文件名
+            if (!fileName || fileName.trim() === '') {
+                fileName = this.getExportFilename(shareLink) + '.123fastlink.txt';
+            }
+            // 然后保存为文本文件
+            const saveResult = await this.apiClient.createTextFileInFolder(fileName, shareLink, parentFolderId);
+            if (!saveResult[0]) {
+                return [false, '保存一级秒传链接文件失败: ' + saveResult[1], null];
+            }
+            // const fileId =  saveResult[2];
+            const fileInfo = saveResult[3]; // {fileName, etag, size}
+            fileInfo.path = fileName;
+            // 最后生成二级秒传链接
+            const secondaryShareLink = this.buildShareLink([fileInfo], '')[2];
+            return [true, null, secondaryShareLink];
         }
 
         // -------------------JSON相关-----------------------
@@ -830,20 +1749,42 @@
         /**
          * 解析JSON格式的秒传链接
          * @param {object} jsonData
-         * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
+         * @returns {Array} - [boolean, string, [{etag: string, size: number, path: string, fileName: string}]] - 是否成功, 错误信息, 文件列表
          */
         _parseJsonShareLink(jsonData) {
-            this.commonPath = jsonData['commonPath'] || '';
-            const shareFileList = jsonData['files'];
-            if (jsonData['usesBase62EtagsInExport']) {
-                shareFileList.forEach(file => {
-                    file.etag = this._base62ToHex(file.etag);
-                });
+            // 如果是字符串，先尝试解析为JSON对象
+            if (typeof jsonData === 'string') {
+                jsonData = this.safeParse(jsonData);
+                if (!jsonData) {
+                    return [false, '无效的JSON格式', null];
+                }
             }
-            shareFileList.forEach(file => {
-                file.fileName = file.path.split('/').pop();
-            });
-            return shareFileList;
+            let failedList = [];
+            try {
+                this.commonPath = jsonData['commonPath'] || '';
+                const shareFileList = jsonData['files'];
+                if (jsonData['usesBase62EtagsInExport']) {
+                    shareFileList.forEach(file => {
+                        file.etag = this._base62ToHex(file.etag);
+                        if (!this._isValidEtag(file.etag)) {
+                            console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', file.etag);
+                            failedList.push({
+                                etag: file.etag,
+                                size: file.size,
+                                path: file.path,
+                                fileName: file.path.split('/').pop()
+                            });
+                        }
+                    });
+                }
+                shareFileList.forEach(file => {
+                    file.fileName = file.path.split('/').pop();
+                });
+                return [true, null, shareFileList, failedList];
+            } catch (error) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析JSON格式秒传链接失败:', error);
+                return [false, '解析JSON格式秒传链接失败: ' + error.message, null];
+            }
         }
 
         // 格式化文件大小
@@ -864,38 +1805,100 @@
          * @returns
          */
         shareLinkToJson(shareLink) {
-            const fileInfo = this._parseShareLink(shareLink);
-            if (fileInfo.length === 0) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+            const fileInfo = this._parseTextShareLink(shareLink);
+            if (!fileInfo[0]) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', fileInfo[1]);
                 return {
-                    error: '解析秒传链接失败'
+                    error: '解析秒传链接失败: ' + fileInfo[1]
                 };
             }
+            const fileInfoData = fileInfo[2];
+            if (fileInfoData.length === 0) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+                return [false, '解析秒传链接失败: 文件列表为空', null];
+            }
             if (this.usesBase62EtagsInExport) {
-                fileInfo.forEach(f => {
+                fileInfoData.forEach(f => {
                     f.etag = this._hexToBase62(f.etag);
                 });
             }
-            const totalSize = fileInfo.reduce((sum, f) => sum + Number(f.size), 0);
-            return {
+            const totalSize = fileInfoData.reduce((sum, f) => sum + Number(f.size), 0);
+            const jsonData = {
                 scriptVersion: this.scriptVersion,
                 exportVersion: "1.0",
                 usesBase62EtagsInExport: this.usesBase62EtagsInExport,
                 commonPath: this.commonPath,
-                totalFilesCount: fileInfo.length,
+                totalFilesCount: fileInfoData.length,
                 totalSize,
                 formattedTotalSize: this._formatSize(totalSize),
-                files: fileInfo.map(f => ({
+                files: fileInfoData.map(f => ({
                     // 去掉fileName
                     ...f, fileName: undefined
                 }))
             };
+            return [true, null, jsonData];
         }
+
+        /**
+         * 从JSON格式生成文本秒传链接
+         * @param {string} jsonText 
+         * @returns    {boolean, string, string} - 是否成功, 错误信息, 秒传链接
+         */
+        jsonToTextShareLink(jsonText) {
+            const jsonData = this.safeParse(jsonText);
+            if (!this.validateJson(jsonData)) {
+                return [false, '无效的JSON格式', null];
+            }
+            const shareFileList = this._parseJsonShareLink(jsonData);
+            if (!shareFileList[0]) {
+                return [false, '解析JSON失败: ' + shareFileList[1], null];
+            }
+
+            return this.buildShareLink(shareFileList[2], this.commonPath);
+        }
+        // -------------------工具函数----------------------- 
+        /**
+         * 获取导出文件名，默认根据公共路径或第一个文件名生成，不带扩展名
+         * @param {string} shareLink 
+         * @param {string} defaultName 
+         * @returns 
+         */
+        getExportFilename(shareLink, defaultName = this.defaultExportName) {
+            if (this.commonPath) {
+                const commonPath = this.commonPath.replace(/\/$/, ''); // 去除末尾斜杠
+                return `${commonPath}`;
+            }
+            const lines = shareLink.trim().split('\n').filter(Boolean);
+            if (lines.length === 0) return defaultName;
+            const firstLine = lines[0];
+            const parts = firstLine.split('#');
+            if (parts.length >= 3) {
+                const fileName = parts[2];
+                const baseName = fileName.split('/').pop().split('.')[0] || 'export';
+                return `${baseName}`;
+            }
+            return defaultName;
+        }
+
+        linkChecker(shareLink) {
+            if (!shareLink || shareLink.trim() === '') {
+                return [false, '链接为空'];
+            }
+            if (this._parseTextShareLink(shareLink)[0]) {
+                return [true, null, "text"];
+            }
+            if (this._parseJsonShareLink(shareLink)[0]) {
+                return [true, null, "json"];
+            }
+            return [false, '无效的秒传链接格式', null];
+        }
+
     }
 
     // 4. UI管理类
     class UiManager {
-        constructor(shareLinkManager, selector) {
+        constructor(shareLinkManager, selector, firstTime = false) {
+            this.firstTime = firstTime;
             this.shareLinkManager = shareLinkManager;
             this.selector = selector;
             this.isProgressMinimized = false;
@@ -907,28 +1910,132 @@
             this.taskIdCounter = 0; // 任务ID计数器
             this.currentTask = null; // 当前正在执行的任务
             // this.taskCancel = false; // 取消当前任务的请求标志
+            this.settings = [
+                { key: "scriptVersion", label: "脚本版本", type: "text", value: this.shareLinkManager.scriptVersion, readonly: true },
+                { key: "COMMON_PATH_LINK_PREFIX_V2", label: "公共路径链接前缀", type: "text", value: this.shareLinkManager.COMMON_PATH_LINK_PREFIX_V2, readonly: true },
+                { key: "DEFAULT_EXPORT_FILENAME", label: "默认导出文件名", type: "text", value: this.shareLinkManager.defaultExportName, description: "当无法从公共路径或文件名生成时使用此默认名称" },
+                { key: "seedFilePathId", label: "种子文件夹ID", type: "number", value: GlobalConfig.seedFilePathId, description: "用于保存二级秒传链接文件的文件夹ID，留空则使用当前文件夹" },
+                { key: "usesBase62EtagsInExport", label: "Base62编码", type: "checkbox", value: GlobalConfig.usesBase62EtagsInExport, description: "Base62编码的etag可以减少链接长度，但不兼容旧版本脚本" },
+                { key: "getFileListPageDelay", label: "获取文件列表每页延时 (毫秒)", type: "number", value: GlobalConfig.getFileListPageDelay },
+                { key: "getFileInfoBatchSize", label: "批量获取文件信息的数量", type: "number", value: GlobalConfig.getFileInfoBatchSize },
+                { key: "getFileInfoDelay", label: "获取文件信息延时 (毫秒)", type: "number", value: GlobalConfig.getFileInfoDelay },
+                { key: "getFolderInfoDelay", label: "获取文件夹信息延时 (毫秒)", type: "number", value: GlobalConfig.getFolderInfoDelay },
+                { key: "saveLinkDelay", label: "保存链接延时 (毫秒)", type: "number", value: GlobalConfig.saveLinkDelay },
+                { key: "mkdirDelay", label: "创建文件夹延时 (毫秒)", type: "number", value: GlobalConfig.mkdirDelay },
+                { key: "maxTextFileSize", label: "文本文件最大大小 (字节)", type: "number", value: GlobalConfig.MAX_TEXT_FILE_SIZE },
+                { key: "DEBUGMODE", label: "调试模式", type: "checkbox", value: GlobalConfig.DEBUGMODE, description: "启用调试模式，页面刷新后生效" }
+            ];
+
+            this.iconLibrary = {
+                transfer: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>`,
+                generate: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                            <polyline points="13 2 13 9 20 9"></polyline>
+                        </svg>`,
+                save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>`,
+                generateSecondary: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>`,
+
+                saveSecondary: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>`,
+                getFromFile: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                    <polyline points="13 2 13 9 20 9"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="9"></line>
+                    <polyline points="9 12 12 9 15 12"></polyline>
+                </svg>`,
+                settings: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>`
+            };
+
+            this.resetSettings();
+        }
+
+        resetSettings() {
+            this.maxTextFileSize = GlobalConfig.MAX_TEXT_FILE_SIZE;
+            this.seedFilePathId = GlobalConfig.seedFilePathId;
         }
 
         /**
          * 初始化UI管理器，插入样式表，设置按钮事件
          */
         init() {
+            // 按钮插入 ==========================================
+            // todo: 二级链接转换
+            const features = [
+                {
+                    iconKey: 'generate',
+                    text: '生成秒传链接',
+                    handler: () => this.addAndRunTask('generate')
+                },
+                {
+                    iconKey: 'save',
+                    text: '保存秒传链接',
+                    handler: () => this.showInputModal()
+                },
+                {
+                    iconKey: 'generateSecondary',
+                    text: '生成二级链接',
+                    handler: () => this.addAndRunTask('generateSecondary')
+                },
+                {
+                    iconKey: 'saveSecondary',
+                    text: '保存二级链接',
+                    handler: () => this.showInputModal("saveSecondary", false, '保存二级链接')
+                },
+                {
+                    iconKey: 'transfer',
+                    text: '转换链接格式',
+                    handler: () => this.showInputModal("convert", false, '确定')
+                },
+                {
+                    iconKey: 'getFromFile',
+                    text: '从秒传文件获取',
+                    handler: () => this.addAndRunTask('saveFromFile')
+                },
+                {
+                    iconKey: 'settings',
+                    text: '设置',
+                    handler: () => this.showSettingsModal()
+                }
+            ];
 
-            const triggerUrlChange = () => {
-                setTimeout(() => this.addButton(), 10);
-            };
-
+            // 页面加载完成后插入样式表和添加按钮
             window.addEventListener('load', () => {
                 this.insertStyle();
-                this.addButton();
+                this.addButton(
+                    features
+                );
             });
+
+            // 监听URL变化，重新添加按钮，防止切换页面后按钮消失 =======
+
+            const triggerUrlChange = () => {
+                setTimeout(() => this.addButton(
+                    features
+                ), 10);
+            };
 
             const originalPushState = history.pushState;
             const originalReplaceState = history.replaceState;
 
             history.pushState = function () {
                 originalPushState.apply(this, arguments);
-                triggerUrlChange(); // 直接调用已绑定的函数
+                triggerUrlChange();
             };
 
             history.replaceState = function () {
@@ -937,6 +2044,30 @@
             };
 
             window.addEventListener('popstate', triggerUrlChange);
+
+            // 首次运行提示
+            if (this.firstTime) {
+                setTimeout(() => {
+                    this.showFirstTimeGuide();
+                }, 1000);
+            }
+        }
+
+        saveSettings() {
+            // 保存设置
+            const newSettings = {};
+            this.settings.forEach(setting => {
+                if (!setting.readonly) {
+                    newSettings[setting.key] = setting.value;
+                }
+            });
+
+            // 全局保存函数
+            saveSettings(newSettings);
+            // 应用到ShareLinkManager
+            this.shareLinkManager.init();
+
+            this.resetSettings();
         }
 
         /**
@@ -947,79 +2078,206 @@
                 let style = document.createElement("style");
                 style.id = "modal-style";
                 style.innerHTML = `
-                .modal-overlay { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); justify-content: center; align-items: center; z-index: 10000; animation: fadeIn 0.3s ease-out; }
-                .modal { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 8px 16px rgba(0, 0, 0, 0.1); text-align: center; width: 480px; max-width: 90vw; max-height: 90vh; overflow: hidden; position: relative; border: 1px solid rgba(255, 255, 255, 0.2); animation: modalSlideIn 0.3s ease-out; }
-                .close-btn { position: absolute; top: 16px; right: 16px; background: transparent; border: none; font-size: 24px; color: #999; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
-                .close-btn:hover { background: rgba(244, 67, 54, 0.1); color: #f44336; transform: scale(1.1); }
-                .modal textarea { width: 100%; padding: 16px; margin: 0 0 24px 0; border: 2px solid #e1e5e9; border-radius: 12px; resize: vertical; min-height: 120px; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 14px; line-height: 1.5; background: #fafbfc; transition: all 0.3s ease; box-sizing: border-box; outline: none; }
-                .modal textarea:focus { border-color: #4CAF50; background: #ffffff; box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1); transform: translateY(-2px); }
-                .modal textarea.drag-over { border-color: #4CAF50; background: #f0f8f0; }
-                .copy-btn { background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); color: white; border: none; padding: 14px 32px; cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 500; min-width: 120px; position: relative; overflow: hidden; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3); }
-                .copy-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(76, 175, 80, 0.4); }
-                .copy-btn:active { transform: translateY(0); box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3); }
-                .button-group { display: flex; gap: 12px; align-items: center; justify-content: center; position: relative; }
-                .copy-dropdown { position: relative; display: inline-block; }
-                .copy-dropdown-menu {position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #e1e5e9; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 120px; z-index: 10001; margin-top: 6px; padding: 0; display: none;}
-                .copy-dropdown:hover .copy-dropdown-menu, .copy-dropdown-menu:hover { display: block !important; }
-                .copy-dropdown-menu { bottom: 100% !important; top: auto !important; margin-bottom: 6px !important; margin-top: 0 !important; }
-                .copy-dropdown-menu::before { content: ''; position: absolute; bottom: -6px; left: 0; width: 100%; height: 6px; background: transparent; }
-                .copy-dropdown-item { padding: 10px 18px; cursor: pointer; font-size: 14px; border-bottom: 1px solid #f0f0f0; background: #fff; transition: background 0.2s;}
-                .copy-dropdown-item:last-child { border-bottom: none; }
-                .copy-dropdown-item:hover { background: #e8f5e9; color: #388e3c;}
-                .copy-dropdown-item:first-child { border-radius: 10px 10px 0 0; }
-                .copy-dropdown-item:last-child { border-radius: 0 0 10px 10px; }
-                .export-btn { background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); color: white; border: none; padding: 14px 24px; cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 500; min-width: 100px; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3); }
-                .export-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(33, 150, 243, 0.4); }
-                .file-input-btn { background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); color: white; border: none; padding: 14px 24px; cursor: pointer; border-radius: 8px; font-size: 16px; font-weight: 500; min-width: 100px; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3); }
-                .file-input-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(255, 152, 0, 0.4); }
-                .file-input { display: none; }
-                .toast { position: fixed; top: 20px; right: 20px; background: #fff; color: #333; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); z-index: 10002; font-size: 14px; max-width: 300px; animation: toastSlideIn 0.3s ease-out; }
-                .toast.success { border-left: 4px solid #4CAF50; }
-                .toast.error { border-left: 4px solid #f44336; }
-                .toast.warning { border-left: 4px solid #ff9800; }
-                .toast.info { border-left: 4px solid #2196F3; }
-                .progress-minimize-btn{position:absolute;left:-10px;top:-10px;width:30px;height:30px;border-radius:50%;background:#ffc504;color:#000000ff;border:none;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.15);z-index:10003}.progress-minimize-btn:hover{transform:scale(1.05)}
-                .minimized-widget{position:fixed;right:20px;bottom:20px;width:220px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:10px 12px;z-index:10005;display:flex;align-items:center;gap:10px;cursor:pointer}
-                .minimized-widget .mini-bar{flex:1}
-                .minimized-widget .mini-title{font-size:12px;color:#333;margin-bottom:6px}
-                .minimized-widget .mini-progress{height:8px;background:#eee;border-radius:6px;overflow:hidden}
-                .minimized-widget .mini-progress>i{display:block;height:100%;background:#4CAF50;width:0%;transition:width 0.2s}
-                .minimized-widget .mini-percent{font-size:12px;color:#666;width:36px;text-align:right}
-                .toast-shake {animation: toastShake 0.4s cubic-bezier(.36,.07,.19,.97) both, toastSlideIn 0.3s ease-out;}
-                #progress-title { margin-bottom:16px; font-size:18px; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; }
-                #progress-desc { margin-top:8px; font-size:13px; color:#888; word-wrap: break-word; word-break: break-all; white-space: pre-wrap; line-height: 1.4; }
-                .task-list-container { margin-top: 16px; }
-                .task-list-toggle { background: transparent; border: 1px solid #ddd; color: #666; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; width: 100%; text-align: left; display: flex; align-items: center; justify-content: space-between; transition: all 0.2s; }
-                .task-list-toggle:hover { background: #f5f5f5; border-color: #bbb; }
-                .task-list-toggle.active { background: #f0f8ff; border-color: #4CAF50; }
-                .task-list { max-height: 120px; overflow-y: auto; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 6px 6px; background: #fafafa; display: none; }
-                .task-list.show { display: block; }
-                .task-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
-                .task-item:last-child { border-bottom: none; }
-                .task-item .task-name { color: #333; flex: 1; }
-                .task-item .task-remove { background: #ff4757; color: white; border: none; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; transition: background 0.2s; }
-                .task-item .task-remove:hover { background: #ff3742; }
-                @keyframes toastShake { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-8px); } 40%, 60% { transform: translateX(8px); } 100% { transform: translateX(0); }
+                :root{--primary-color:#6366f1;--primary-hover:#4f46e5;--secondary-color:#10b981;--secondary-hover:#059669;--danger-color:#ef4444;--danger-hover:#dc2626;--warning-color:#f59e0b;--warning-hover:#d97706;--info-color:#3b82f6;--info-hover:#2563eb;--background:#ffffff;--surface:#f8fafc;--border:#e2e8f0;--text-primary:#1e293b;--text-secondary:#64748b;--text-tertiary:#94a3b8;--shadow-sm:0 1px 2px 0 rgba(0,0,0,0.05);--shadow:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -1px rgba(0,0,0,0.06);--shadow-lg:0 10px 15px -3px rgba(0,0,0,0.1),0 4px 6px -2px rgba(0,0,0,0.05);--shadow-xl:0 20px 25px -5px rgba(0,0,0,0.1),0 10px 10px -5px rgba(0,0,0,0.04);--radius-sm:6px;--radius:12px;--radius-lg:16px;--transition:all 0.2s cubic-bezier(0.4,0,0.2,1)}
+                .modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.2s ease-out}
+                .modal{background:var(--background);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);width:90%;max-width:500px;max-height:90vh;overflow:hidden;border:1px solid var(--border);transform:translateY(0);animation:slideUp 0.3s cubic-bezier(0.4,0,0.2,1)}
+                .modal-header{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+                .modal-title{font-size:20px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}
+                .modal-title svg{width:20px;height:20px}
+                .modal-close{background:none;border:none;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;transition:var(--transition)}
+                .modal-close:hover{background:var(--surface);color:var(--text-primary)}
+                .modal-content{padding:24px}
+                .modal-footer{padding:16px 24px 24px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end}
+                .file-input{display:none}
+                .file-list-container{background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:20px;max-height:200px;overflow-y:auto}
+                .file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+                .file-count{font-size:13px;color:var(--text-secondary);font-weight:500}
+                .file-list{display:flex;flex-direction:column;gap:8px}
+                .file-item{font-size:13px;color:var(--text-primary);padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);word-break:break-all;line-height:1.4}
+                .modal textarea{width:100%;min-height:120px;padding:16px;border:2px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text-primary);font-family:'JetBrains Mono','Consolas','Monaco',monospace;font-size:13px;line-height:1.5;resize:vertical;transition:var(--transition);box-sizing:border-box}
+                .modal textarea:focus{outline:none;border-color:var(--primary-color);box-shadow:0 0 0 3px rgba(99,102,241,0.1)}
+                .modal textarea.drag-over{border-color:var(--primary-color);background:rgba(99,102,241,0.05)}
+                .button-group{display:flex;gap:12px;align-items:center}
+                .btn{padding:10px 20px;border-radius:var(--radius);font-size:14px;font-weight:500;border:none;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:100px}
+                .btn:disabled{opacity:0.5;cursor:not-allowed}
+                .btn-primary{background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;box-shadow:var(--shadow)}
+                .btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+                .btn-secondary{background:linear-gradient(135deg,var(--secondary-color),var(--secondary-hover));color:white;box-shadow:var(--shadow)}
+                .btn-secondary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+                .btn-outline{background:white;color:var(--text-primary);border:1px solid var(--border)}
+                .btn-outline:hover:not(:disabled){background:var(--surface);border-color:var(--text-secondary)}
+                .btn-danger{background:var(--danger-color);color:white}
+                .btn-danger:hover:not(:disabled){background:var(--danger-hover)}
+                .dropdown{position:relative}
+                .dropdown-toggle{display:inline-flex;align-items:center;gap:4px}
+                .dropdown-menu{position:absolute;bottom:100%;left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:140px;z-index:1001;margin-bottom:8px;opacity:0;transform:translateY(10px);visibility:hidden;transition:var(--transition)}
+                .dropdown:hover .dropdown-menu{opacity:1;transform:translateY(0);visibility:visible}
+                .dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
+                .dropdown-item:hover{background:var(--surface)}
+                .dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
+                .dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}
+                .dropdown-divider{height:1px;background:var(--border);margin:4px 0}
+                .toast{position:fixed;top:24px;right:24px;background:white;color:var(--text-primary);padding:12px 20px;border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:10002;font-size:14px;max-width:320px;animation:slideInRight 0.3s cubic-bezier(0.4,0,0.2,1);border-left:4px solid var(--info-color);display:flex;align-items:center;gap:12px}
+                .toast.success{border-left-color:var(--secondary-color)}
+                .toast.error{border-left-color:var(--danger-color)}
+                .toast.warning{border-left-color:var(--warning-color)}
+                .toast.info{border-left-color:var(--info-color)}
+                .toast-icon{width:20px;height:20px}
+                .progress-modal{animation:modalSlideIn 0.3s cubic-bezier(0.4,0,0.2,1)}
+                .progress-content{padding:24px;text-align:center}
+                .progress-title{font-size:18px;font-weight:600;color:var(--text-primary);margin-bottom:20px;word-break:break-all;line-height:1.4}
+                .progress-bar-container{height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin-bottom:12px}
+                .progress-bar{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:4px;transition:width 0.3s ease}
+                .progress-info{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+                .progress-percent{font-size:16px;font-weight:600;color:var(--primary-color)}
+                .progress-desc{font-size:13px;color:var(--text-secondary);text-align:left;background:var(--surface);padding:12px;border-radius:var(--radius);margin-top:16px;word-break:break-all;line-height:1.4}
+                .progress-minimize-btn{position:absolute;top:16px;right:16px;width:32px;height:32px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
+                .progress-minimize-btn:hover{background:var(--border);color:var(--text-primary)}
+                .minimized-widget{position:fixed;right:24px;bottom:24px;background:white;border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:12px 16px;z-index:10005;min-width:240px;cursor:pointer;transition:var(--transition);border:1px solid var(--border)}
+                .minimized-widget:hover{transform:translateY(-2px);box-shadow:var(--shadow-xl)}
+                .widget-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+                .widget-title{font-size:12px;font-weight:500;color:var(--text-primary)}
+                .widget-badge{background:var(--danger-color);color:white;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px}
+                .widget-progress{display:flex;align-items:center;gap:12px}
+                .widget-bar{flex:1;height:4px;background:var(--surface);border-radius:2px;overflow:hidden}
+                .widget-fill{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:2px}
+                .widget-percent{font-size:12px;font-weight:600;color:var(--primary-color);min-width:40px}
+                .task-list-container{margin-top:20px}
+                .task-toggle{width:100%;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-secondary);font-size:13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:var(--transition)}
+                .task-toggle:hover{background:#f1f5f9}
+                .task-toggle.active{background:var(--primary-color);color:white;border-color:var(--primary-color)}
+                .task-list{max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);background:white;display:none}
+                .task-list.show{display:block}
+                .task-item{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:var(--transition)}
+                .task-item:last-child{border-bottom:none}
+                .task-item.current{background:rgba(99,102,241,0.05)}
+                .task-info{display:flex;align-items:center;gap:8px}
+                .task-icon{width:12px;height:12px;border-radius:50%}
+                .task-icon.generate{background:var(--secondary-color)}
+                .task-icon.save{background:var(--info-color)}
+                .task-icon.retry{background:var(--warning-color)}
+                .task-name{font-size:13px;color:var(--text-primary)}
+                .task-status{font-size:12px;color:var(--text-secondary)}
+                .task-remove{width:24px;height:24px;border-radius:50%;border:none;background:var(--surface);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
+                .task-remove:hover{background:var(--danger-color);color:white}
+                .task-remove:disabled{opacity:0.5;cursor:not-allowed}
+                .results-content{text-align:left}
+                .results-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+                .stat-card{padding:16px;border-radius:var(--radius);text-align:center}
+                .stat-card.success{background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2)}
+                .stat-card.failed{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2)}
+                .stat-value{font-size:24px;font-weight:700;margin-bottom:4px}
+                .stat-value.success{color:var(--secondary-color)}
+                .stat-value.failed{color:var(--danger-color)}
+                .stat-label{font-size:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px}
+                .failed-list{max-height:200px;overflow-y:auto;background:var(--surface);border-radius:var(--radius);padding:12px}
+                .failed-item{padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:8px;font-size:12px}
+                .failed-item:last-child{margin-bottom:0}
+                .failed-name{color:var(--text-primary);word-break:break-all}
+                .failed-error{color:var(--danger-color);font-size:11px;margin-top:4px}
+                .mfy-button-container{position:relative;display:inline-block}
+                .mfy-button{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow)}
+                .mfy-button:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+                .mfy-button svg{width:16px;height:16px}
+                .mfy-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:160px;z-index:1000;opacity:0;transform:translateY(-10px);visibility:hidden;transition:var(--transition)}
+                .mfy-button-container:hover .mfy-dropdown{opacity:1;transform:translateY(0);visibility:visible}
+                .mfy-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
+                .mfy-dropdown-item:hover{background:var(--surface)}
+                .mfy-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
+                .mfy-dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}
+                .mfy-dropdown-divider{height:1px;background:var(--border);margin:4px 0}
+                @keyframes fadeIn{from{opacity:0}
+                to{opacity:1}
+                }@keyframes slideUp{from{opacity:0;transform:translateY(20px)}
+                to{opacity:1;transform:translateY(0)}
+                }@keyframes slideInRight{from{opacity:0;transform:translateX(100%)}
+                to{opacity:1;transform:translateX(0)}
+                }@keyframes modalSlideIn{from{opacity:0;transform:translateY(-20px) scale(0.95)}
+                to{opacity:1;transform:translateY(0) scale(1)}
+                }@keyframes pulse{0%,100%{opacity:1}
+                50%{opacity:0.5}
+                }.animate-pulse{animation:pulse 2s cubic-bezier(0.4,0,0.6,1) infinite}
+                /* ============================================================
+                设置页面样式
+                ============================================================ */
+                /* 1. 容器与布局 */
+                .settings-container {display: flex;flex-direction: column;gap: 12px;padding: 4px 0;}
+                /* 2. 设置行项目 - 卡片感设计 */
+                .setting-row {display: flex;align-items: center;justify-content: space-between;padding: 16px;background: var(--surface);border-radius: var(--radius);transition: var(--transition);border: 1px solid transparent;}
+                .setting-row:hover {background: #ffffff;border-color: var(--border);box-shadow: var(--shadow-sm);transform: translateY(-1px);}
+                .setting-row.readonly {opacity: 0.6;cursor: not-allowed;}
+                /* 3. 文本信息区 */
+                .setting-info {display: flex;flex-direction: column;gap: 4px;flex: 1;padding-right: 24px;}
+                .setting-label-text {font-size: 14.5px;font-weight: 600;color: var(--text-primary);letter-spacing: 0.3px;}
+                .setting-describe {font-size: 12.5px;color: var(--text-secondary);line-height: 1.5;}
+                /* 4. 交互控件区 */
+                .setting-action {display: flex;align-items: center;justify-content: flex-end;min-width: 100px;}
+                /* 5. 现代化 Switch 开关 (iOS 风格) */
+                .settings-switch {position: relative;display: inline-block;width: 44px;height: 24px;}
+                .settings-switch input {opacity: 0;width: 0;height: 0;}
+                .switch-slider {position: absolute;cursor: pointer;top: 0; left: 0; right: 0; bottom: 0;background-color: var(--border);transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 24px;}
+                .switch-slider:before {position: absolute;content: "";height: 18px;width: 18px;left: 3px;bottom: 3px;background-color: white;transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 50%;box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
+                .settings-switch input:checked + .switch-slider {background-color: var(--primary-color);}
+                .settings-switch input:focus + .switch-slider {box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);}
+                .settings-switch input:checked + .switch-slider:before {transform: translateX(20px);}
+                /* 6. 分段选择器 (Segmented Radio) */
+                .settings-radio-group {display: flex;background: #eef2f6;padding: 3px;border-radius: 10px;gap: 2px;}
+                .radio-tab {cursor: pointer;position: relative;}
+                .radio-tab input {position: absolute;opacity: 0;}
+                .radio-tab span {display: block;padding: 6px 14px;font-size: 12px;font-weight: 500;border-radius: 7px;color: var(--text-secondary);transition: all 0.2s;}
+                .radio-tab input:checked + span {background: white;color: var(--primary-color);box-shadow: var(--shadow-sm);}
+                /* 7. 输入框与下拉框 */
+                .settings-input, .settings-select {width: 100%;max-width: 180px;padding: 8px 12px;border: 1.5px solid var(--border);border-radius: var(--radius-sm);background: #ffffff !important;color: var(--text-primary);font-size: 13px;transition: var(--transition);}
+                .settings-input:focus, .settings-select:focus {border-color: var(--primary-color);outline: none;box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);}
+                /* 8. 底部状态反馈样式 */
+                .settings-status {flex: 1;font-size: 13px;display: flex;align-items: center;gap: 6px;}
+                .status-warning {color: var(--warning-color);background: rgba(245, 158, 11, 0.1);padding: 4px 10px;border-radius: 20px;}
+                .status-success {color: var(--secondary-color);animation: fadeIn 0.3s ease;}
+                /* 9. 底部按钮组微调 */
+                .modal-footer .button-group {display: flex;gap: 10px;}
+                .reset-default-btn {margin-right: auto; /* 将恢复默认按钮推向最左侧 */color: var(--text-secondary) !important;}
+                .reset-default-btn:hover {color: var(--danger-color) !important;border-color: var(--danger-color) !important;}/* 模态框布局固定 */
+                .settings-modal-box {width: 90%;max-width: 600px;max-height: 85vh; /* 限制最高高度 */display: flex;flex-direction: column; /* 纵向排列 Header, Content, Footer */}
+                /* 内容滚动区 */
+                .settings-scroll-area {flex: 1; /* 自动占据剩余高度 */overflow-y: auto; /* 关键：设置项过多时在此滚动 */padding: 24px;background: #ffffff;}
+                /* 只读行样式 */
+                .setting-row.readonly-row {background: #f1f5f9; /* 灰色背景 */opacity: 0.75;cursor: not-allowed;border: 1px dashed var(--border);}
+                .setting-row.readonly-row:hover {transform: none;box-shadow: none;}
+                .readonly-badge {background: var(--text-tertiary);color: white;font-size: 10px;padding: 2px 6px;border-radius: 4px;margin-left: 8px;vertical-align: middle;}
+                /* 禁用控件样式 */
+                .settings-switch.readonly, 
+                .settings-radio-group.readonly,
+                .settings-select:disabled,
+                .settings-input:read-only {pointer-events: none; /* 禁止点击 */filter: grayscale(1); /* 置灰 */}
+                /* Footer 固定在底部 */
+                .modal-footer {flex-shrink: 0;background: white;z-index: 10;}
                 `;
                 document.head.appendChild(style);
             }
         }
-
         /**
-         * 显示提示消息（右上角）
-         * @param {*} message
-         * @param {*} type
-         * @param {*} duration
+         * 显示提示消息
          */
         showToast(message, type = 'info', duration = 3000) {
-            // this.insertStyle();
+            const icons = {
+                success: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+                error: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+                warning: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+                info: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+            };
+
             const toast = document.createElement('div');
-            toast.className = `toast ${type} toast-shake`; // 添加 toast-shake 类
-            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+            <div class="toast-icon">${icons[type]}</div>
+            <div>${message}</div>
+        `;
+
             document.body.appendChild(toast);
 
             setTimeout(() => {
-                toast.style.animation = 'toastSlideOut 0.3s ease-out forwards';
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100%)';
                 setTimeout(() => {
                     if (toast.parentNode) {
                         toast.parentNode.removeChild(toast);
@@ -1028,105 +2286,319 @@
             }, duration);
         }
 
+        // ------------------------------ 设置页 ----------------------------------
         /**
-         * 显示复制弹窗
-         * @param {*} defaultText
+         * 显示系统设置模态框
          */
-        showCopyModal(defaultText = "") {
+        showSettingsModal() {
             // this.insertStyle();
-            // this.currentShareLink = defaultText;
-            // let existingModal = document.getElementById('modal');
-            // if (existingModal) existingModal.remove();
 
-            // 获取文件名列表
-            let fileListHtml = '';
-            if (Array.isArray(this.shareLinkManager.fileInfoList) && this.shareLinkManager.fileInfoList.length > 0) {
-                fileListHtml = `<div style="max-height:120px;overflow-y:auto;background:#f8f8f8;border-radius:6px;padding:8px 10px;margin-bottom:16px;text-align:left;font-size:13px;">
-                    <div style='color:#888;margin-bottom:4px;'>文件列表（共${this.shareLinkManager.fileInfoList.length}个）:</div>
-                    ${this.shareLinkManager.fileInfoList.map(f => `<div style='color:#333;word-break:break-all;margin:2px 0;'>${f.path}</div>`).join('')}
-                </div>`;
-            }
+            // 1. 防止重复打开
+            const existingModal = document.getElementById('settings-modal');
+            if (existingModal) existingModal.remove();
 
-            let modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'modal';
-            modalOverlay.innerHTML = `
-                <div class="modal">
-                    <button class="close-btn" onclick="document.getElementById('modal').remove()">×</button>
-                    <h3>🚀 秒传链接</h3>
-                    ${fileListHtml}
-                    <textarea id="copyText" placeholder="请输入或粘贴秒传链接...">${defaultText}</textarea>
-                    <div class="button-group">
-                        <div class="copy-dropdown">
-                            <button class="copy-btn" id="massageboxButton">
-                                复制 ▼
-                            </button>
-                            <div class="copy-dropdown-menu">
-                                <div class="copy-dropdown-item" data-type="json">复制JSON</div>
-                                <div class="copy-dropdown-item" data-type="text">复制纯文本</div>
-                            </div>
+            // 2. 数据副本隔离：深拷贝原始设置
+            const editingSettings = JSON.parse(JSON.stringify(this.settings));
+            let settingsChanged = false;
+
+            // 3. 生成设置项 HTML
+            let settingsHtml = '';
+            editingSettings.forEach((setting) => {
+                const id = `setting-${setting.key}`;
+                let controlHtml = '';
+                // 判定是否只读
+                const isReadonly = setting.readonly === true;
+
+                switch (setting.type) {
+                    case 'checkbox':
+                        controlHtml = `
+                    <label class="settings-switch ${isReadonly ? 'readonly' : ''}">
+                        <input type="checkbox" id="${id}" ${setting.value ? 'checked' : ''} 
+                                class="settings-control-input" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
+                        <span class="switch-slider"></span>
+                    </label>`;
+                        break;
+                    case 'select':
+                        controlHtml = `
+                    <select id="${id}" class="settings-select" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
+                        ${setting.options.map(opt => `<option value="${opt.value}" ${opt.value === setting.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
+                    </select>`;
+                        break;
+                    case 'radio':
+                        controlHtml = `
+                    <div class="settings-radio-group ${isReadonly ? 'readonly' : ''}" data-key="${setting.key}">
+                        ${setting.options.map(opt => `
+                            <label class="radio-tab">
+                                <input type="radio" name="${setting.key}" value="${opt.value}" 
+                                    ${opt.value === setting.value ? 'checked' : ''} 
+                                    class="settings-control-input" ${isReadonly ? 'disabled' : ''}>
+                                <span>${opt.label}</span>
+                            </label>
+                        `).join('')}
+                    </div>`;
+                        break;
+                    default:
+                        controlHtml = `<input type="${setting.type || 'text'}" id="${id}" value="${setting.value}" 
+                                    class="settings-input" data-key="${setting.key}" ${isReadonly ? 'readonly' : ''}>`;
+                }
+
+                settingsHtml += `
+                    <div class="setting-row ${isReadonly ? 'readonly-row' : ''}">
+                        <div class="setting-info">
+                            <div class="setting-label-text">${setting.label}</div>
+                            <div class="setting-describe">${setting.describe || setting.description || ''}</div>
                         </div>
-                        <button class="export-btn" id="exportJsonButton">导出JSON</button>
+                        <div class="setting-action">${controlHtml}</div>
+                    </div>`;
+            });
+
+            // 4. 构建模态框结构 (关键：固定头部底部，中间滚动)
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.id = 'settings-modal';
+            modalOverlay.innerHTML = `
+            <div class="modal settings-modal-box">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                        系统设置
+                    </div>
+                    <button class="modal-close" id="close-modal-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+                <div class="modal-content settings-scroll-area">
+                    <div class="settings-container">${settingsHtml}</div>
+                </div>
+                <div class="modal-footer">
+                    <div id="settings-status-bar" class="settings-status"></div>
+                    <div class="button-group">
+                        <button class="btn btn-outline reset-default-btn" id="reset-btn">恢复默认</button>
+                        <button class="btn btn-outline" id="cancel-btn">取消</button>
+                        <button class="btn btn-primary" id="save-btn">保存设置</button>
                     </div>
                 </div>
-            `;
-            // 导出JSON按钮事件
-            modalOverlay.querySelector('#exportJsonButton').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.exportJson();
-            })
-            // 下拉菜单悬停控制
-            const dropdown = modalOverlay.querySelector('.copy-dropdown');
-            const dropdownMenu = modalOverlay.querySelector('.copy-dropdown-menu');
-            let hideTimer;
+            </div>`;
 
-            // 鼠标进入下拉容器时显示菜单
-            dropdown.addEventListener('mouseenter', () => {
-                clearTimeout(hideTimer);
-                dropdownMenu.style.display = 'block';
+            document.body.appendChild(modalOverlay);
+
+            // --- 内部逻辑函数 ---
+
+            const setStatus = (msg, type = 'info') => {
+                const statusEl = document.getElementById('settings-status-bar');
+                if (statusEl) statusEl.innerHTML = `<span class="status-${type}">${msg}</span>`;
+            };
+
+            const closeSettings = (needConfirm = true) => {
+                if (settingsChanged && needConfirm) {
+                    this.showAlertModal('warning', '未保存', '确定放弃当前修改并离开吗？', {
+                        confirmText: '放弃', showCancel: true, cancelText: '返回',
+                        onConfirm: () => modalOverlay.remove()
+                    });
+                } else {
+                    modalOverlay.remove();
+                }
+            };
+
+            const saveSettings = () => {
+                if (!settingsChanged) return closeSettings(false);
+                try {
+                    editingSettings.forEach(edited => {
+                        const original = this.settings.find(s => s.key === edited.key);
+                        if (original && !original.readonly) {
+                            // 检查seedFilePath
+                            if (edited.key === 'seedFilePathId') {
+                                if (edited.value) {
+                                    const pathLenth = edited.value.toString().length;
+                                    if (pathLenth === 1 || pathLenth === 8) {
+                                        this.seedFilePathId = edited.value;
+                                        original.value = edited.value; // 更新内存
+                                    } else {
+                                        this.showAlertModal('error', '种子文件路径错误', "跳过设置路径ID");
+                                    }
+                                }
+                            } else {
+                                original.value = edited.value; // 更新内存
+                            }
+                            if (typeof GlobalConfig !== 'undefined' && GlobalConfig.hasOwnProperty(edited.key)) {
+                                GlobalConfig[edited.key] = edited.value; // 更新业务配置
+                            }
+                            this.saveSettings(); // 持久化
+                        }
+                    });
+                    this.showToast('设置保存成功', 'success', 2000);
+                    closeSettings(false);
+                } catch (e) {
+                    this.showToast('持久化失败: ' + e.message, 'error');
+                }
+            };
+
+            // --- 事件绑定 ---
+
+            modalOverlay.addEventListener('change', (e) => {
+                const target = e.target;
+                const key = target.dataset.key || target.name;
+                if (!key) return;
+
+                const setting = editingSettings.find(s => s.key === key);
+                // 【核心拦截】如果副本标志位或原始项是 readonly，直接不响应
+                if (!setting || setting.readonly) return;
+
+                if (target.type === 'checkbox') setting.value = target.checked;
+                else if (target.type === 'radio') setting.value = target.value;
+                else if (target.type === 'number') setting.value = parseFloat(target.value);
+                else setting.value = target.value;
+
+                settingsChanged = true;
+                setStatus('设置已修改，请保存', 'warning');
             });
 
-            // 鼠标离开下拉容器时延迟隐藏菜单
-            dropdown.addEventListener('mouseleave', () => {
-                hideTimer = setTimeout(() => {
-                    dropdownMenu.style.display = 'none';
-                }, 300); // 300ms延迟，给用户足够时间移动鼠标
-            });
+            modalOverlay.querySelector('#save-btn').onclick = saveSettings;
+            modalOverlay.querySelector('#cancel-btn').onclick = () => closeSettings(true);
+            modalOverlay.querySelector('#close-modal-btn').onclick = () => closeSettings(true);
+            modalOverlay.querySelector('#reset-btn').onclick = () => {
+                this.showAlertModal('error', '重置所有设置？', '该操作将清除 GM 存储并刷新页面恢复默认配置！', {
+                    confirmText: '立即重置', showCancel: true,
+                    onConfirm: () => {
+                        editingSettings.forEach(s => GM_deleteValue(s.key));
+                        location.reload();
+                    }
+                });
+            };
 
-            // 鼠标进入菜单时取消隐藏
-            dropdownMenu.addEventListener('mouseenter', () => {
-                clearTimeout(hideTimer);
-            });
+            // 遮罩点击及键盘支持
+            modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeSettings(true); };
+            const handleKey = (e) => {
+                if (e.key === 'Escape') closeSettings(true);
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveSettings();
+            };
+            document.addEventListener('keydown', handleKey);
+            const originalRemove = modalOverlay.remove;
+            modalOverlay.remove = function () {
+                document.removeEventListener('keydown', handleKey);
+                originalRemove.call(this);
+            };
+        }
 
-            // 鼠标离开菜单时隐藏
-            dropdownMenu.addEventListener('mouseleave', () => {
-                hideTimer = setTimeout(() => {
-                    dropdownMenu.style.display = 'none';
-                }, 100); // 稍微延迟避免误触
-            });
+        showFirstTimeGuide() {
+            this.showAlertModal('info', '欢迎使用123FastLink',
+                `如果您是第一次使用本脚本，建议先阅读使用说明文档，了解基本功能和操作方法。
+                \n
+                ✅️ 如果要使用二级秒传链接，
+                建议先在设置中设置种子文件路径`);
+        }
 
-            // 复制按钮点击直接复制纯文本
-            modalOverlay.querySelector('#massageboxButton').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.copyContent('text');
-            });
+        /**
+         * 显示复制弹窗
+         */
+        showCopyModal(defaultText = "", allFilePath = [], title = "秒传链接") {
+            const fileListHtml = Array.isArray(this.shareLinkManager.fileInfoList) &&
+                allFilePath.length > 0 ? `
+                <div class="file-list-container">
+                    <div class="file-list-header">
+                        <div class="file-count">文件列表（共${allFilePath.length}个）</div>
+                    </div>
+                    <div class="file-list">
+                        ${allFilePath.map(f => `
+                            <div class="file-item">${f}</div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : '';
 
-            // 点击菜单项复制对应类型
-            modalOverlay.querySelectorAll('.copy-dropdown-item').forEach(item => {
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.innerHTML = `
+            <div class="modal">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>
+                        ${title}
+                    </div>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-content">
+                    ${fileListHtml}
+                    <textarea id="copyText" placeholder="请输入或粘贴秒传链接...">${defaultText}</textarea>
+                </div>
+                <div class="modal-footer">
+                    <div class="dropdown">
+                        <button class="btn btn-primary dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            复制
+                        </button>
+                        <div class="dropdown-menu">
+                            <div class="dropdown-item" data-type="json">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path>
+                                    <path d="M18 14h-8"></path>
+                                    <path d="M15 18h-5"></path>
+                                    <path d="M10 6h8v4h-8V6Z"></path>
+                                </svg>
+                                复制JSON
+                            </div>
+                            <div class="dropdown-item" data-type="text">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="16 18 22 12 16 6"></polyline>
+                                    <polyline points="8 6 2 12 8 18"></polyline>
+                                </svg>
+                                复制纯文本
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" id="exportJsonButton">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        导出JSON
+                    </button>
+                </div>
+            </div>
+        `;
+
+            // 复制菜单事件
+            const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
+            dropdownItems.forEach(item => {
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
                     const type = item.dataset.type;
                     this.copyContent(type);
-                    clearTimeout(hideTimer);
-                    dropdownMenu.style.display = 'none'; // 点击后隐藏菜单
                 });
             });
 
-            modalOverlay.addEventListener('click', (e) => {
-                if (e.target === modalOverlay) modalOverlay.remove();
+            // 主复制按钮事件
+            modalOverlay.querySelector('.dropdown-toggle').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.copyContent('default');
             });
 
+            // 导出按钮事件
+            modalOverlay.querySelector('#exportJsonButton').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.exportJson();
+            });
+
+            // 点击遮罩关闭
+            // modalOverlay.addEventListener('click', (e) => {
+            //     if (e.target === modalOverlay) modalOverlay.remove();
+            // });
+
             document.body.appendChild(modalOverlay);
+
+            // 自动聚焦文本域
             setTimeout(() => {
                 const textarea = modalOverlay.querySelector('#copyText');
                 if (textarea && !defaultText) textarea.focus();
@@ -1144,18 +2616,27 @@
 
             let contentToCopy = inputField.value;
 
-            if (type === 'json') {
-                try {
-                    const jsonData = this.shareLinkManager.shareLinkToJson(contentToCopy);
-                    contentToCopy = JSON.stringify(jsonData, null, 2);
-                } catch (error) {
-                    this.showToast('转换JSON失败: ' + error.message, 'error');
+            if (type !== 'default') {
+                let contentType = this.shareLinkManager.linkChecker(contentToCopy);
+                if (!contentType[0]) {
+                    this.showToast('无效的秒传链接，无法复制', 'error');
                     return;
+                }
+
+                if (type === 'json') {
+                    if (contentType[2] === 'text') {
+                        const contentToCopyInfo = this.shareLinkManager.shareLinkToJson(contentToCopy)[2];
+                        contentToCopy = JSON.stringify(contentToCopyInfo, null, 2);
+                    }
+                } else if (type === 'text') {
+                    if (contentType[2] === 'json') {
+                        contentToCopy = this.shareLinkManager.jsonToTextShareLink(contentToCopy)[2];
+                    }
                 }
             }
 
             navigator.clipboard.writeText(contentToCopy).then(() => {
-                this.showToast(`已成功复制${type === 'json' ? 'JSON' : '纯文本'}到剪贴板 📋`, 'success');
+                this.showToast(`已成功复制到剪贴板 📋`, 'success');
             }).catch(err => {
                 this.showToast(`复制失败: ${err.message || '请手动复制内容'}`, 'error');
             });
@@ -1176,9 +2657,9 @@
             }
 
             try {
-                const jsonData = this.shareLinkManager.shareLinkToJson(shareLink);
+                const jsonData = this.shareLinkManager.shareLinkToJson(shareLink)[2];
                 const jsonContent = JSON.stringify(jsonData, null, 2);
-                const filename = this.getExportFilename(shareLink);
+                const filename = this.shareLinkManager.getExportFilename(shareLink) + '.json';
 
                 this.downloadJsonFile(jsonContent, filename);
                 this.showToast('JSON文件导出成功 📁', 'success');
@@ -1200,24 +2681,6 @@
             URL.revokeObjectURL(url);
         }
 
-        // 获取文件名用于JSON导出
-        getExportFilename(shareLink) {
-            if (this.shareLinkManager.commonPath) {
-                const commonPath = this.shareLinkManager.commonPath.replace(/\/$/, ''); // 去除末尾斜杠
-                return `${commonPath}.json`;
-            }
-            const lines = shareLink.trim().split('\n').filter(Boolean);
-            if (lines.length === 0) return 'export.json';
-            const firstLine = lines[0];
-            const parts = firstLine.split('#');
-            if (parts.length >= 3) {
-                const fileName = parts[2];
-                const baseName = fileName.split('/').pop().split('.')[0] || 'export';
-                return `${baseName}.json`;
-            }
-            return 'export.json';
-        }
-
         /**
          * 显示或更新进度模态框
          * @param title - 标题
@@ -1227,7 +2690,7 @@
          */
         updateProgressModal(title = "正在处理...", percent = 0, desc = "", taskCount = 1) {
             percent = Math.ceil(percent);
-            // 如果处于最小化状态，则展示/更新右下角浮动卡片并返回
+
             if (this.isProgressMinimized) {
                 this.updateMinimizedWidget(title, percent, desc, taskCount);
                 return;
@@ -1237,52 +2700,82 @@
             if (!modal) {
                 modal = document.createElement('div');
                 modal.id = 'progress-modal';
-                modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10001;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;';
+                modal.className = 'modal-overlay progress-modal';
                 modal.innerHTML = `
-                    <div id="progress-card" style="position:relative;background:#fff;padding:32px 48px;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.15);min-width:320px;max-width:320px;text-align:center;">
-                        <button class="progress-minimize-btn" title="最小化">−</button>
-                        <div id="progress-title" style="margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;">${title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '')}</div>
-                        <div style="background:#eee;border-radius:8px;overflow:hidden;height:18px;">
-                            <div id="progress-bar" style="background:#4CAF50;height:18px;width:${percent}%;transition:width 0.2s;"></div>
+                <div class="modal" style="max-width: 400px;">
+                    <div class="modal-header">
+                        <div class="modal-title">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-pulse">
+                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                            </svg>
+                            ${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}
                         </div>
-                        <div id="progress-percent" style="margin-top:8px;font-size:14px;">${percent}%</div>
-                        <div id="progress-desc" style="margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;">${desc}</div>
+                        <button class="progress-minimize-btn" title="最小化">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="4 14 10 14 10 20"></polyline>
+                                <polyline points="20 10 14 10 14 4"></polyline>
+                                <line x1="14" y1="10" x2="21" y2="3"></line>
+                                <line x1="3" y1="21" x2="10" y2="14"></line>
+                            </svg>
+                        </button>
                     </div>
-                `;
+                    <div class="progress-content">
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progress-bar" style="width: ${percent}%"></div>
+                        </div>
+                        <div class="progress-info">
+                            <div class="progress-percent">${percent}%</div>
+                        </div>
+                        ${desc ? `<div class="progress-desc">${desc}</div>` : ''}
+                    </div>
+                </div>
+            `;
+
+                // 最小化按钮事件
+                const minimizeBtn = modal.querySelector('.progress-minimize-btn');
+                minimizeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.isProgressMinimized = true;
+                    this.removeProgressModalAndKeepState();
+                    this.updateMinimizedWidget(title, percent, desc, taskCount);
+                });
+
                 document.body.appendChild(modal);
-
-                // 绑定最小化按钮事件（点击后移除模态并创建右下角浮动卡片）
-                const btn = modal.querySelector('.progress-minimize-btn');
-                if (!btn.dataset.bound) {
-                    btn.dataset.bound = 'true';
-                    btn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        this.isProgressMinimized = true;
-                        // 读取当前进度显示到浮动卡片
-                        const curTitle = modal.querySelector('#progress-title')?.innerText || title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '');
-                        const curPercent = parseInt(modal.querySelector('#progress-percent')?.innerText || percent) || 0;
-                        const curDesc = modal.querySelector('#progress-desc')?.innerText || desc;
-                        this.removeProgressModalAndKeepState();
-                        this.updateMinimizedWidget(curTitle, curPercent, curDesc, taskCount);
-                    });
-                }
             } else {
-                const titleElement = modal.querySelector('#progress-title');
-                const descElement = modal.querySelector('#progress-desc');
+                const titleElement = modal.querySelector('.modal-title');
+                const barElement = modal.querySelector('#progress-bar');
+                const percentElement = modal.querySelector('.progress-percent');
+                const descElement = modal.querySelector('.progress-desc');
 
-                titleElement.innerText = title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '');
-                titleElement.style.cssText = 'margin-bottom:16px;font-size:18px;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
+                if (titleElement) {
+                    titleElement.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-pulse">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                    </svg>
+                    ${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}
+                `;
+                }
 
-                modal.querySelector('#progress-bar').style.width = percent + '%';
-                modal.querySelector('#progress-percent').innerText = percent + '%';
+                if (barElement) barElement.style.width = percent + '%';
+                if (percentElement) percentElement.textContent = percent + '%';
 
-                descElement.innerText = desc;
-                descElement.style.cssText = 'margin-top:8px;font-size:13px;color:#888;word-wrap:break-word;word-break:break-all;white-space:pre-wrap;line-height:1.4;';
+                if (desc) {
+                    if (!descElement) {
+                        const progressContent = modal.querySelector('.progress-content');
+                        const descDiv = document.createElement('div');
+                        descDiv.className = 'progress-desc';
+                        descDiv.textContent = desc;
+                        progressContent.appendChild(descDiv);
+                    } else {
+                        descElement.textContent = desc;
+                    }
+                } else if (descElement) {
+                    descElement.remove();
+                }
             }
-            // 更新任务列表
+
             this.manageTaskList(modal);
         }
-
 
         /**
          * 任务列表管理 - 统一处理任务列表的创建、更新和事件绑定
@@ -1291,54 +2784,67 @@
             const existingContainer = modal.querySelector('.task-list-container');
             const currentTaskCount = this.taskList.length;
 
-            // 没有任务时删除任务列表
             if (currentTaskCount === 0) {
                 existingContainer?.remove();
                 return;
             }
 
-            // 生成任务列表HTML
             const generateHtml = () => `
-                <div class="task-list-container">
-                    <button class="task-list-toggle" id="task-list-toggle">
-                        <span>任务队列 (${currentTaskCount})</span>
-                        <span>▼</span>
-                    </button>
-                    <div class="task-list" id="task-list">
-                        ${this.taskList.map(task => {
+            <div class="task-list-container">
+                <button class="task-toggle" id="task-list-toggle">
+                    <span>任务队列 (${currentTaskCount})</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </button>
+                <div class="task-list" id="task-list">
+                    ${this.taskList.map(task => {
                 const isCurrentTask = this.currentTask && this.currentTask.id === task.id;
-                const taskStatus = isCurrentTask ? ' (执行中)' : '';
-                const taskClass = isCurrentTask ? ' style="background: #e8f5e8; border-left: 3px solid #4CAF50;"' : '';
-                return `
-                                <div class="task-item" data-task-id="${task.id}"${taskClass}>
-                                    <span class="task-name">${task.type === 'generate' ? '链接生成' : '链接转存'}${taskStatus}</span>
-                                    <button class="task-remove" data-task-id="${task.id}">删除</button>
-                                </div>
-                            `;
-                //<button class="task-remove" data-task-id="${task.id}" ${isCurrentTask ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>删除</button>
-            }).join('')}
-                    </div>
-                </div>
-            `;
+                const typeIcon = task.type === 'generate' ? 'generate' :
+                    task.type === 'save' ? 'save' : 'retry';
+                const typeText = task.type === 'generate' ? '生成' :
+                    task.type === 'save' ? '保存' : '重试';
 
-            // 绑定事件
+                return `
+                            <div class="task-item ${isCurrentTask ? 'current' : ''}" data-task-id="${task.id}">
+                                <div class="task-info">
+                                    <div class="task-icon ${typeIcon}"></div>
+                                    <div>
+                                        <div class="task-name">${typeText}秒传链接</div>
+                                        ${isCurrentTask ? '<div class="task-status">执行中...</div>' : ''}
+                                    </div>
+                                </div>
+                                <button class="task-remove" data-task-id="${task.id}" 
+                                    ${/*isCurrentTask ? 'disabled' : ''*/ ""}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                            </div>
+                        `;
+            }).join('')}
+                </div>
+            </div>
+        `;
+
             const bindEvents = (container) => {
                 const toggle = container.querySelector('#task-list-toggle');
                 const taskList = container.querySelector('#task-list');
 
-                // 切换展开/收起
                 toggle?.addEventListener('click', () => {
                     const isShown = taskList.classList.toggle('show');
                     toggle.classList.toggle('active', isShown);
-                    toggle.querySelector('span:last-child').textContent = isShown ? '▲' : '▼';
+                    const svg = toggle.querySelector('svg');
+                    if (svg) {
+                        svg.style.transform = isShown ? 'rotate(180deg)' : 'rotate(0deg)';
+                    }
                 });
 
-                // 删除任务
                 container.querySelectorAll('.task-remove').forEach(btn => {
                     btn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         const taskId = btn.dataset.taskId;
-                        // 防止删除正在执行的任务
                         if (this.currentTask && this.currentTask.id.toString() === taskId) {
                             this.showToast('正在中断任务', 'warning');
                             this.cancelCurrentTask();
@@ -1352,34 +2858,32 @@
             };
 
             if (!existingContainer) {
-                // 创建
-                const progressDesc = modal.querySelector('#progress-desc');
-                progressDesc.insertAdjacentHTML('afterend', generateHtml());
+                const progressContent = modal.querySelector('.progress-content');
+                progressContent.insertAdjacentHTML('beforeend', generateHtml());
                 bindEvents(modal.querySelector('.task-list-container'));
             } else {
-                // 检查是否需要重建（任务数量变化或当前任务状态变化）
                 const existingTaskItems = existingContainer.querySelectorAll('.task-item');
-                const hasCurrentTaskChanged = existingContainer.querySelector('.task-item[style*="background: #e8f5e8"]') ? !this.currentTask : !!this.currentTask;
+                const hasCurrentTaskChanged = existingContainer.querySelector('.task-item.current') ?
+                    !this.currentTask : !!this.currentTask;
 
                 if (existingTaskItems.length !== currentTaskCount || hasCurrentTaskChanged) {
                     const wasExpanded = existingContainer.querySelector('.task-list').classList.contains('show');
                     existingContainer.remove();
 
-                    const progressDesc = modal.querySelector('#progress-desc');
-                    progressDesc.insertAdjacentHTML('afterend', generateHtml());
+                    const progressContent = modal.querySelector('.progress-content');
+                    progressContent.insertAdjacentHTML('beforeend', generateHtml());
                     const newContainer = modal.querySelector('.task-list-container');
                     bindEvents(newContainer);
 
-                    // 恢复展开状态
                     if (wasExpanded) {
                         const taskList = newContainer.querySelector('.task-list');
                         const toggle = newContainer.querySelector('#task-list-toggle');
                         taskList.classList.add('show');
                         toggle.classList.add('active');
-                        toggle.querySelector('span:last-child').textContent = '▲';
+                        const svg = toggle.querySelector('svg');
+                        if (svg) svg.style.transform = 'rotate(180deg)';
                     }
                 } else {
-                    // 只更新计数
                     const toggleSpan = existingContainer.querySelector('#task-list-toggle span:first-child');
                     if (toggleSpan) toggleSpan.textContent = `任务队列 (${currentTaskCount})`;
                 }
@@ -1403,33 +2907,35 @@
         // 创建或更新右下角最小化浮动进度条卡片
         updateMinimizedWidget(title = '正在处理...', percent = 0, desc = '', taskCount = 1) {
             let widget = document.getElementById(this.minimizeWidgetId);
-            // 红点提示，仅在剩余任务数>=2时显示
-            let redDotHtml = '';
-            if (this.taskList.length >= 1) {
-                redDotHtml = `<button class="mini-red-dot" style="position:absolute;left:-8px;top:-8px;width:22px;height:22px;background:#f44336;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;z-index:2;box-shadow:0 2px 6px rgba(0,0,0,0.12);">${this.taskList.length}</button>`;
-            }
+            const badgeHtml = this.taskList.length >= 1 ?
+                `<div class="widget-badge">${this.taskList.length}</div>` : '';
+
             const html = `
-                ${redDotHtml}
-                <div class="mini-bar">
-                    <div class="mini-title">${title + (taskCount > 1 ? ` - 队列 ${taskCount}` : '')}</div>
-                    <div class="mini-progress"><i style="width:${percent}%"></i></div>
+            <div class="widget-header">
+                <div class="widget-title">${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}</div>
+                ${badgeHtml}
+            </div>
+            <div class="widget-progress">
+                <div class="widget-bar">
+                    <div class="widget-fill" style="width: ${percent}%"></div>
                 </div>
-                <div class="mini-percent">${percent}%</div>
-            `;
+                <div class="widget-percent">${percent}%</div>
+            </div>
+        `;
+
             if (!widget) {
                 widget = document.createElement('div');
                 widget.id = this.minimizeWidgetId;
                 widget.className = 'minimized-widget';
                 widget.innerHTML = html;
-                // 修复点击不灵敏：用mousedown替换click，并阻止冒泡
-                widget.addEventListener('mousedown', (e) => {
+
+                widget.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    e.preventDefault();
                     this.isProgressMinimized = false;
                     this.removeMinimizedWidget();
-                    // 重新显示模态，使用当前进度值
                     this.updateProgressModal(title, percent, desc, taskCount);
                 });
+
                 document.body.appendChild(widget);
             } else {
                 widget.innerHTML = html;
@@ -1447,32 +2953,35 @@
          * 包括UI进度条显示和轮询
          * @param {*} fileSelectInfo - 选中文件信息，来自selector
          */
-        async launchProgressModal(fileSelectInfo) {
-            // 轮询进度
-            const mgr = this.shareLinkManager;
-            // this.showProgressModal("生成秒传链接", 0, "准备中...");
-            mgr.progress = 0;
-            const poll = setInterval(() => {
-                this.updateProgressModal("生成秒传链接", mgr.progress, mgr.progressDesc, this.taskList.length);
-                if (mgr.progress > 100) {
-                    clearInterval(poll);
-                    setTimeout(() => this.hideProgressModal(), 500);
-                }
-            }, 500);
-
-            const shareLink = await mgr.generateShareLink(fileSelectInfo);
-
+        async launchGenerateModal(fileSelectInfo, secondary = false) {
+            const poll = this.startRollPolling("生成秒传链接");
+            let shareLinkResult;
+            if (secondary) {
+                shareLinkResult = await this.shareLinkManager.generateSecondaryShareLink(fileSelectInfo, null, this.seedFilePathId);
+            } else {
+                shareLinkResult = await this.shareLinkManager.generateShareLink(fileSelectInfo);
+            }
+            if (!shareLinkResult[0]) {
+                this.showToast(shareLinkResult[1] || "秒传链接生成失败", 'error');
+                this.showAlertModal("error", "秒传链接生成失败", shareLinkResult[1] || "未知错误");
+                this.stopRollPolling(poll);
+                return null;
+            }
+            const shareLink = shareLinkResult[2];
             // 清除任务取消标志
             this.shareLinkManager.taskCancel = false;
-
             if (!shareLink) {
                 this.showToast("没有选择文件", 'warning');
-                clearInterval(poll);
+                this.stopRollPolling(poll);
                 return;
             }
-            clearInterval(poll);
-            this.hideProgressModal();
-            this.showCopyModal(shareLink);
+            this.stopRollPolling(poll);
+            this.showCopyModal(shareLink, shareLinkResult[3] || [], secondary ? "二级链接" : "秒传链接");
+            return shareLink;
+        }
+
+        async launchSecondaryGenerateModal(fileSelectInfo) {
+            return this.launchGenerateModal(fileSelectInfo, true);
         }
 
         /**
@@ -1481,68 +2990,109 @@
          * @returns {Promise<void>}
          */
         async showSaveResultsModal(result) {
-            // this.insertStyle();
-            // let existingModal = document.getElementById('results-modal');
-            // if (existingModal) existingModal.remove();
             const totalCount = result.success.length + result.failed.length;
             const successCount = result.success.length;
             const failedCount = result.failed.length;
-            let failedListHtml = '';
-            if (failedCount > 0) {
-                failedListHtml = `
-                    <div style="margin-top: 12px; color: #f44336; font-size: 14px;">
-                        <div style="margin-bottom: 6px;">失败文件列表：</div>
-                        <div style="max-height: 160px; overflow-y: auto; background: #f5f5f5; border-radius: 4px; padding: 8px;">
-                            ${result.failed.map(fileInfo => `<div style="font-size: 13px; color: #b71c1c; margin: 2px 0;">${fileInfo.fileName} ${fileInfo.error ? `<span style="color: #f44336;">(${fileInfo.error})</span>` : ''}</div>`).join('')}
-                        </div>
-                    </div>
-                `;
-            }
-            let modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'results-modal';
-            modalOverlay.innerHTML = `
-                <div class="modal">
-                    <button class="close-btn" onclick="document.getElementById('results-modal').remove()">×</button>
-                    <h3>📊 保存结果</h3>
-                    <div style="margin: 20px 0; text-align: left;">
-                        <div style="font-size: 16px; margin-bottom: 16px;">
-                            <span style="color: #666;">总计：</span><strong>${totalCount}</strong> 个文件
-                        </div>
-                        <div style="font-size: 16px; margin-bottom: 8px; color: #4CAF50;">
-                            ✅ 成功：<strong>${successCount}</strong> 个
-                        </div>
-                        <div style="font-size: 16px; margin-bottom: 8px; color: ${failedCount > 0 ? '#f44336' : '#666'};">
-                            ${failedCount > 0 ? '❌' : '✅'} 失败：<strong>${failedCount}</strong> 个
-                        </div>
-                        ${failedListHtml}
-                    </div>
-                    <div class="button-group">
-                        <button class="copy-btn" onclick="document.getElementById('results-modal').remove()">确定</button>
-                        ${failedCount > 0 ? `
-                <div class="copy-dropdown">
-                    <button class="file-input-btn" id="retryButton">重试失败 ▼</button>
-                    <div class="copy-dropdown-menu">
-                        <div class="copy-dropdown-item" data-action="retry">重试失败</div>
-                        <div class="copy-dropdown-item" data-action="export">导出失败链接</div>
-                    </div>
-                </div>` : ''}
-                    </div>
-                </div>
-            `;
 
-            // 添加重试和导出按钮事件
+            const failedListHtml = failedCount > 0 ? `
+            <div style="margin-top: 20px;">
+                <div style="font-size: 13px; font-weight: 500; color: var(--danger-color); margin-bottom: 8px;">
+                    失败文件列表
+                </div>
+                <div class="failed-list">
+                    ${result.failed.map(fileInfo => `
+                        <div class="failed-item">
+                            <div class="failed-name">${fileInfo.fileName}</div>
+                            ${fileInfo.error ? `<div class="failed-error">${fileInfo.error}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.innerHTML = `
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        保存结果
+                    </div>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-content results-content">
+                    <div class="results-stats">
+                        <div class="stat-card success">
+                            <div class="stat-value success">${successCount}</div>
+                            <div class="stat-label">成功</div>
+                        </div>
+                        <div class="stat-card failed">
+                            <div class="stat-value failed">${failedCount}</div>
+                            <div class="stat-label">失败</div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; font-size: 13px; color: var(--text-secondary); margin: 20px 0;">
+                        总计处理 <strong>${totalCount}</strong> 个文件
+                    </div>
+                    ${failedListHtml}
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">
+                        关闭
+                    </button>
+                    ${failedCount > 0 ? `
+                        <div class="dropdown">
+                            <button class="btn btn-secondary dropdown-toggle">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                                    <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+                                </svg>
+                                操作
+                            </button>
+                            <div class="dropdown-menu">
+                                <div class="dropdown-item" data-action="retry">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                        <path d="M3 3v5h5"></path>
+                                    </svg>
+                                    重试失败
+                                </div>
+                                <div class="dropdown-item" data-action="export">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                    导出失败链接
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
             if (failedCount > 0) {
-                const dropdownMenu = modalOverlay.querySelector('.copy-dropdown-menu');
-                dropdownMenu.querySelectorAll('.copy-dropdown-item').forEach(item => {
+                const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
+                dropdownItems.forEach(item => {
                     item.addEventListener('click', async () => {
                         const action = item.dataset.action;
+                        modalOverlay.remove();
+
                         if (action === 'retry') {
-                            document.getElementById('results-modal').remove();
                             this.addAndRunTask('retry', { fileList: result.failed });
                         } else if (action === 'export') {
-                            const shareLink = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '');
-                            this.showCopyModal(shareLink);
+                            const shareLinkResult = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '');
+                            this.showCopyModal(shareLinkResult[2], shareLinkResult[3] || [], "导出失败链接");
                         }
                     });
                 });
@@ -1556,19 +3106,215 @@
         }
 
         /**
+         * 显示提示窗
+         * @param {string} type - 提示类型: 'success' | 'error'
+         * @param {string} title - 标题
+         * @param {string} message - 消息内容
+         * @param {Object} options - 配置选项
+         * @param {string} options.confirmText - 确认按钮文字
+         * @param {Function} options.onConfirm - 确认回调
+         * @param {boolean} options.showCancel - 是否显示取消按钮
+         * @param {string} options.cancelText - 取消按钮文字
+         * @param {Function} options.onCancel - 取消回调
+         * @param {number} options.autoClose - 自动关闭时间(毫秒)
+         */
+        async showAlertModal(type, title, message, options = {}) {
+            const {
+                confirmText = '确定',
+                onConfirm = null,
+                showCancel = false,
+                cancelText = '取消',
+                onCancel = null,
+                autoClose = 0
+            } = options;
+
+            // 定义图标和颜色
+            const iconConfig = {
+                success: {
+                    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>`,
+                    color: 'var(--secondary-color)',
+                    bgColor: 'rgba(16, 185, 129, 0.1)',
+                    borderColor: 'rgba(16, 185, 129, 0.2)'
+                },
+                error: {
+                    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>`,
+                    color: 'var(--danger-color)',
+                    bgColor: 'rgba(239, 68, 68, 0.1)',
+                    borderColor: 'rgba(239, 68, 68, 0.2)'
+                },
+                warning: {
+                    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>`,
+                    color: 'var(--warning-color)',
+                    bgColor: 'rgba(245, 158, 11, 0.1)',
+                    borderColor: 'rgba(245, 158, 11, 0.2)'
+                },
+                info: {
+                    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>`,
+                    color: 'var(--info-color)',
+                    bgColor: 'rgba(59, 130, 246, 0.1)',
+                    borderColor: 'rgba(59, 130, 246, 0.2)'
+                }
+            };
+
+            const config = iconConfig[type] || iconConfig.success;
+
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.innerHTML = `
+                <div class="modal" style="max-width: 420px;">
+                    <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+                        <div class="modal-title" style="justify-content: center; gap: 12px;">
+                            <div style="width: 48px; height: 48px; border-radius: 50%; 
+                                background: ${config.bgColor}; border: 1px solid ${config.borderColor};
+                                display: flex; align-items: center; justify-content: center;
+                                color: ${config.color};">
+                                ${config.icon}
+                            </div>
+                        </div>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="modal-content" style="text-align: center; padding-top: 8px;">
+                        <h3 style="margin: 0 0 12px 0; font-size: 18px; font-weight: 600; color: var(--text-primary);">
+                            ${title}
+                        </h3>
+                        <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; 
+                            margin-bottom: 24px; word-break: break-all;">
+                            ${message}
+                        </div>
+                    </div>
+                    <div class="modal-footer" style="justify-content: ${showCancel ? 'space-between' : 'center'};">
+                        ${showCancel ? `
+                            <button class="btn btn-outline" id="cancelButton" style="min-width: 100px;">
+                                ${cancelText}
+                            </button>
+                        ` : ''}
+                        <button class="btn btn-primary" id="confirmButton" 
+                            style="min-width: 100px; background: ${config.color}; border-color: ${config.color};">
+                            ${confirmText}
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            // 确认按钮事件
+            const confirmButton = modalOverlay.querySelector('#confirmButton');
+            confirmButton.addEventListener('click', () => {
+                modalOverlay.remove();
+                if (onConfirm && typeof onConfirm === 'function') {
+                    onConfirm();
+                }
+            });
+
+            // 取消按钮事件
+            if (showCancel) {
+                const cancelButton = modalOverlay.querySelector('#cancelButton');
+                cancelButton.addEventListener('click', () => {
+                    modalOverlay.remove();
+                    if (onCancel && typeof onCancel === 'function') {
+                        onCancel();
+                    }
+                });
+            }
+
+            // 点击遮罩关闭
+            modalOverlay.addEventListener('click', (e) => {
+                if (e.target === modalOverlay) {
+                    modalOverlay.remove();
+                    if (onCancel && typeof onCancel === 'function') {
+                        onCancel();
+                    }
+                }
+            });
+
+            // 回车键确认
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter') {
+                    modalOverlay.remove();
+                    if (onConfirm && typeof onConfirm === 'function') {
+                        onConfirm();
+                    }
+                } else if (e.key === 'Escape') {
+                    modalOverlay.remove();
+                    if (onCancel && typeof onCancel === 'function') {
+                        onCancel();
+                    }
+                }
+            };
+            document.addEventListener('keydown', handleKeyPress);
+
+            // 自动关闭
+            if (autoClose > 0) {
+                setTimeout(() => {
+                    if (modalOverlay.parentNode) {
+                        modalOverlay.remove();
+                        if (onConfirm && typeof onConfirm === 'function') {
+                            onConfirm();
+                        }
+                    }
+                }, autoClose);
+            }
+
+            // 移除时清理事件监听
+            const originalRemove = modalOverlay.remove;
+            modalOverlay.remove = function () {
+                document.removeEventListener('keydown', handleKeyPress);
+                originalRemove.call(this);
+            };
+
+            document.body.appendChild(modalOverlay);
+
+            // 自动聚焦确认按钮
+            setTimeout(() => {
+                confirmButton.focus();
+            }, 100);
+        }
+
+        /*
+            * 启动轮询刷新进度框
+        */
+        startRollPolling(title) {
+            this.updateProgressModal(title, 0, "准备中...");
+            this.shareLinkManager.progress = 0;
+            return setInterval(() => {
+                this.updateProgressModal(title, this.shareLinkManager.progress, this.shareLinkManager.progressDesc, this.taskList.length);
+            }, 100);
+        }
+
+        /**
+         *  停止轮询更新进度
+         * @param {} poll 
+         */
+        stopRollPolling(poll) {
+            clearInterval(poll);
+            this.hideProgressModal();
+        }
+
+        /**
          * 任务函数 - 启动从输入的内容解析并保存秒传链接，UI层面的保存入口，retry为是可以重试失败的文件
          * @param {*} content - 输入内容（秒传链接/JSON）
          */
         async launchSaveLink(content, retry = false) {
-            this.updateProgressModal("保存秒传链接", 0, "准备中...");
-            this.shareLinkManager.progress = 0;
-            const poll = setInterval(() => {
-                this.updateProgressModal("保存秒传链接", this.shareLinkManager.progress, this.shareLinkManager.progressDesc, this.taskList.length);
-                // 正常情况下不主动清除
-                if (this.shareLinkManager.progress > 100) {
-                    clearInterval(poll);
-                }
-            }, 100);
+            const poll = this.startRollPolling("保存秒传链接");
             let saveResult;
             if (!retry) {
                 saveResult = await this.shareLinkManager.saveShareLink(content);
@@ -1577,12 +3323,94 @@
             }
             // 清除任务取消标志
             this.shareLinkManager.taskCancel = false;
+            this.stopRollPolling(poll);
+            this.showSaveResultsModal(saveResult[2]);
+            this.renewWebPageList();
+            this.showToast(saveResult[0] ? "保存成功" : "保存失败", saveResult[0] ? 'success' : 'error');
+        }
 
-            clearInterval(poll);
-            this.hideProgressModal();
-            this.showSaveResultsModal(saveResult);
+        async launchSaveSecondaryLink(content) {
+            const poll = this.startRollPolling("保存秒传链接");
+            let saveResult = await this.shareLinkManager.saveSecondaryShareLink(content, this.seedFilePathId);
+            this.shareLinkManager.taskCancel = false;
+            this.stopRollPolling(poll);
+            if (!saveResult[0]) {
+                this.showToast("保存失败 " + saveResult[1], 'error');
+                this.showAlertModal('error', '保存失败', saveResult[1]);
+                return;
+            }
+            this.showSaveResultsModal(saveResult[2]);
+            this.renewWebPageList();
+            this.showToast(saveResult[0] ? "保存成功" : "保存失败", saveResult[0] ? 'success' : 'error');
+
+        }
+
+        /**
+         * 任务函数 - 启动从仅包含秒传链接文本内容保存秒传链接，UI层面的保存入口
+         * @param {string} linkText 
+         * @param {string} fileName 
+         */
+        async launchSaveLinkOnlyText(linkText, fileName) {
+            const poll = this.startRollPolling("保存秒传链接");
+            const saveResult = await this.shareLinkManager.saveShareLinkOnlyText(linkText, fileName);
+            this.stopRollPolling(poll);
+            this.showAlertModal(saveResult[0] ? 'success' : 'error',
+                saveResult[0] ? '保存成功' : '保存失败',
+                saveResult[1]);
             this.renewWebPageList();
             this.showToast(saveResult ? "保存成功" : "保存失败", saveResult ? 'success' : 'error');
+        }
+
+
+        /**
+         * 任务函数 - 启动转换秒传链接格式，UI层面的转换入口
+         * @param {string} content - 输入内容（秒传链接/JSON）
+         */
+        async launchConvert(content) {
+            // 可以利用现有的复制模态框显示结果，要先转换成文本链接
+            // if (this.shareLinkManager.)
+            const textType = this.shareLinkManager.linkChecker(content);
+            let shareLink;
+            if (!textType[0]) {
+                this.showAlertModal('error', '格式错误', '无法识别的秒传链接格式。');
+                return;
+            }
+            if (textType[2] === 'json') {
+                shareLink = this.shareLinkManager.jsonToTextShareLink(content)[2];
+            } else if (textType[2] === 'text') {
+                const shareLinkDict = this.shareLinkManager.shareLinkToJson(content)[2];
+                shareLink = JSON.stringify(shareLinkDict, null, 2);
+            }
+            this.showCopyModal(shareLink, []);
+        }
+
+        async launchSaveFromFile(fileSelectInfo) {
+            const selectedRowKeys = fileSelectInfo.selectedRowKeys;
+            if (!selectedRowKeys || selectedRowKeys.length === 0) {
+                this.showToast("没有选择文件", 'warning');
+                return;
+            }
+            if (selectedRowKeys.length > 1) {
+                this.showToast("暂时只能选择单个文件", 'warning');
+                return;
+            }
+            const file = selectedRowKeys[0];
+            // 先展开对话框
+            this.updateProgressModal("读取文件中...", 0, "请稍候...");
+            const fileContentRes = await this.shareLinkManager.getFileContentAsText(file);
+            if (!fileContentRes[0]) {
+                this.showToast("读取文件失败", 'error');
+                return;
+            }
+            const content = fileContentRes[2];
+            // 校验格式
+            const textType = this.shareLinkManager.linkChecker(content);
+            if (!textType[0]) {
+                this.showAlertModal('error', '格式错误', '无法识别的秒传链接格式。');
+                return;
+            }
+            // 启动保存
+            this.launchSaveLink(content);
         }
 
         /**
@@ -1593,7 +3421,7 @@
             const renewButton = document.querySelector('.layout-operate-icon.mfy-tooltip svg');
             if (renewButton) {
                 const clickEvent = new MouseEvent('click', {
-                    bubbles: true, cancelable: true, view: window
+                    bubbles: true, cancelable: true
                 });
                 renewButton.dispatchEvent(clickEvent);
             }
@@ -1602,58 +3430,105 @@
         /**
          * 显示输入模态框
          */
-        async showInputModal() {
-            // this.insertStyle();
-            let existingModal = document.getElementById('save-modal');
-            if (existingModal) existingModal.remove();
-
-            let modalOverlay = document.createElement('div');
+        async showInputModal(saveTask = 'save', canOnlyLink = true, buttonText = '保存') {
+            const modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'save-modal';
             modalOverlay.innerHTML = `
-                <div class="modal">
-                    <button class="close-btn" onclick="document.getElementById('save-modal').remove()">×</button>
-                    <h3>📥 保存秒传链接</h3>
-                    <textarea id="saveText" placeholder="请输入或粘贴秒传链接，或拖入JSON文件导入..."></textarea>
-                    <div class="button-group">
-                        <button class="copy-btn" id="saveButton">保存</button>
-                        <button class="file-input-btn" id="selectFileButton">选择JSON</button>
-                        <input type="file" class="file-input" id="jsonFileInput" accept=".json">
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                        保存秒传链接
                     </div>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
+                <div class="modal-content">
+                    <textarea id="saveText" placeholder="请输入或粘贴秒传链接，或将JSON文件拖拽到此处..."></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="saveButton">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>
+                    ${buttonText}
+                    </button>
+                    ${canOnlyLink ? `
+                    <button class="btn btn-primary" id="saveButtonOnlyLink">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                        </svg>
+                        仅保存链接
+                    </button>
+                    ` : ''}
+                    <button class="btn btn-outline" id="selectFileButton">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                            <polyline points="13 2 13 9 20 9"></polyline>
+                        </svg>
+                        选择文件
+                    </button>
+                    <input type="file" class="file-input" id="jsonFileInput" accept=".">
+                </div>
+            </div>
             `;
-
             const textarea = modalOverlay.querySelector('#saveText');
             const fileInput = modalOverlay.querySelector('#jsonFileInput');
             const selectFileBtn = modalOverlay.querySelector('#selectFileButton');
 
-            // 设置文件拖拽和选择
             this.setupFileDropAndInput(textarea, fileInput);
 
-            // 选择文件按钮
             selectFileBtn.addEventListener('click', () => {
                 fileInput.click();
             });
 
+            // 保存按钮事件绑定
             modalOverlay.querySelector('#saveButton').addEventListener('click', async () => {
-                const content = document.getElementById("saveText").value;
-                if (!content.trim()) {
+                const content = textarea.value.trim();
+                if (!content) {
                     this.showToast("请输入秒传链接或导入JSON文件", 'warning');
                     return;
                 }
-
                 modalOverlay.remove();
-
-                this.addAndRunTask('save', { content });
+                this.addAndRunTask(saveTask, { content });
             });
+
+            if (canOnlyLink) {
+                // 仅保存链接按钮事件绑定
+                modalOverlay.querySelector('#saveButtonOnlyLink').addEventListener('click', async () => {
+                    const content = textarea.value.trim();
+                    if (!content) {
+                        this.showToast("请输入秒传链接或导入JSON文件", 'warning');
+                        return;
+                    }
+                    modalOverlay.remove();
+                    this.addAndRunTask('saveOnlyLink', { content });
+                });
+            }
+
 
             modalOverlay.addEventListener('click', (e) => {
                 if (e.target === modalOverlay) modalOverlay.remove();
             });
 
+
             document.body.appendChild(modalOverlay);
+
             setTimeout(() => {
-                const textarea = modalOverlay.querySelector('#saveText');
                 if (textarea) textarea.focus();
             }, 100);
         }
@@ -1691,33 +3566,31 @@
         }
 
         /**
-         * 读取JSON文件并将内容填充到文本区域
+         * 读取文件并将内容填充到文本区域
          * @param {*} file - 要读取的文件
          * @param {*} textarea - 目标文本区域
          * @returns
          */
         readJsonFile(file, textarea) {
-            if (!file.name.toLowerCase().endsWith('.json')) {
-                this.showToast('请选择JSON文件', 'warning');
+            // 不再限制文件类型
+
+            // if (!file.name.toLowerCase().endsWith('.json')) {
+            //     this.showToast('请选择JSON文件', 'warning');
+            //     return;
+            // }
+
+            // 限制文件大小
+            if (file.size > this.maxTextFileSize) {
+                this.showToast(`文件过大，最大支持 ${this.maxTextFileSize / (1024 * 1024)} MB，请检查是否选错文件`, 'error');
+                this.showAlertModal('error', '文件过大', `所选文件大小为 ${(file.size / (1024 * 1024)).toFixed(2)} MB，超过最大支持 ${(this.maxTextFileSize / (1024 * 1024))} MB。请检查是否选错文件。
+                如果需要导入更大文件，请修改允许的最大值`);
                 return;
             }
 
             const reader = new FileReader();
             reader.onload = (e) => {
-                try {
-                    const jsonContent = e.target.result;
-                    const jsonData = JSON.parse(jsonContent);
-
-                    if (this.shareLinkManager.validateJson(jsonData)) {
-                        // const shareLink = this.shareLinkManager.jsonToShareLink(jsonData);
-                        textarea.value = jsonContent;
-                        this.showToast('JSON文件导入成功 ✅', 'success');
-                    } else {
-                        this.showToast('无效的JSON格式', 'error');
-                    }
-                } catch (error) {
-                    this.showToast('JSON文件解析失败: ' + error.message, 'error');
-                }
+                textarea.value = e.target.result;
+                this.showToast('文件导入成功 ✅', 'success');
             };
             reader.readAsText(file);
         }
@@ -1730,6 +3603,34 @@
             if (this.isTaskRunning) return this.showToast("已添加到队列，稍后执行", 'info');
             if (this.taskList.length === 0) return null;
 
+            // 任务处理函数映射
+            const taskHandlerMap = {
+                'generate': async (task) => {
+                    await this.launchGenerateModal(task.params.fileSelectInfo);
+                },
+                'generateSecondary': async (task) => {
+                    await this.launchSecondaryGenerateModal(task.params.fileSelectInfo);
+                },
+                'save': async (task) => {
+                    await this.launchSaveLink(task.params.content);
+                },
+                'retry': async (task) => {
+                    await this.launchSaveLink(task.params.fileList, true);
+                },
+                'saveOnlyLink': async (task) => {
+                    await this.launchSaveLinkOnlyText(task.params.content, task.params.fileName || '123FastLink.123share');
+                },
+                'saveSecondary': async (task) => {
+                    await this.launchSaveSecondaryLink(task.params.content);
+                },
+                'convert': async (task) => {
+                    await this.launchConvert(task.params.content);
+                },
+                'saveFromFile': async (task) => {
+                    await this.launchSaveFromFile(task.params.fileSelectInfo);
+                }
+            };
+
             // 找到第一个未执行的任务
             const task = this.taskList.find(t => !this.currentTask || t.id !== this.currentTask.id);
             if (!task) return null;
@@ -1740,15 +3641,17 @@
             // 执行任务
             setTimeout(async () => {
                 this.isTaskRunning = true;
-                if (task.type === 'generate') {
-                    // 生成秒传链接
-                    await this.launchProgressModal(task.params.fileSelectInfo);
-                } else if (task.type === 'save') {
-                    // 保存秒传链接
-                    await this.launchSaveLink(task.params.content);
-                } else if (task.type === 'retry') {
-                    // 重试任务
-                    await this.launchSaveLink(task.params.fileList, true);
+
+                if (taskHandlerMap[task.type]) {
+                    try {
+                        await taskHandlerMap[task.type](task);
+                    } catch (error) {
+                        console.error(`任务${task.id}执行失败:`, error);
+                        this.showAlertModal('error', '任务执行失败', `任务${task.id}执行过程中出现错误: ${error.message}`);
+                        this.showToast(`任务${task.id}执行失败: ${error.message}`, 'error');
+                    }
+                } else {
+                    this.showToast(`未知的任务类型: ${task.type}`, 'error');
                 }
                 this.isTaskRunning = false;
                 // 任务完成，从列表中移除
@@ -1766,18 +3669,57 @@
          */
         addAndRunTask(taskType, params = {}) {
             const taskId = ++this.taskIdCounter;
-            if (taskType === 'generate') {
-                // 获取选中文件
-                const fileSelectInfo = this.selector.getSelection();
-                if (!fileSelectInfo || fileSelectInfo.length === 0) {
-                    this.showToast("请先选择文件", 'warning');
-                    return;
-                }
-                this.taskList.push({ id: taskId, type: 'generate', params: { fileSelectInfo } });
-            } else if (taskType === 'save') {
-                this.taskList.push({ id: taskId, type: 'save', params: { content: params.content } });
-            } else if (taskType === 'retry') {
-                this.taskList.push({ id: taskId, type: 'retry', params: { fileList: params.fileList } });
+            let fileSelectInfo = null;
+            switch (taskType) {
+                case 'generate':
+                    // 先获取选中文件信息，防止任务执行时选择变更
+                    fileSelectInfo = this.selector.getSelection();
+                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                        this.showToast("请先选择文件", 'warning');
+                        return;
+                    }
+                    this.taskList.push({ id: taskId, type: 'generate', params: { fileSelectInfo } });
+                    break;
+                case 'generateSecondary':
+                    // 先获取选中文件信息，防止任务执行时选择变更
+                    fileSelectInfo = this.selector.getSelection();
+                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                        this.showToast("请先选择文件", 'warning');
+                        return;
+                    }
+                    this.taskList.push({ id: taskId, type: 'generateSecondary', params: { fileSelectInfo } });
+                    break;
+
+                case 'save':
+                    this.taskList.push({ id: taskId, type: 'save', params: { content: params.content } });
+                    break;
+
+                case 'retry':
+                    this.taskList.push({ id: taskId, type: 'retry', params: { fileList: params.fileList } });
+                    break;
+
+                case 'saveOnlyLink':
+                    this.taskList.push({ id: taskId, type: 'saveOnlyLink', params: { content: params.content } });
+                    break;
+                case 'saveSecondary':
+                    this.taskList.push({ id: taskId, type: 'saveSecondary', params: { content: params.content } });
+                    break;
+                case 'convert':
+                    this.taskList.push({ id: taskId, type: 'convert', params: { content: params.content } });
+                    break;
+                case 'saveFromFile':
+                    fileSelectInfo = this.selector.getSelection();
+                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                        this.showToast("请先选择文件", 'warning');
+                        return;
+                    }
+                    this.taskList.push({ id: taskId, type: 'saveFromFile', params: { fileSelectInfo } });
+                    break;
+                default:
+                    // 未知的 taskType
+                    console.warn(`未知的 taskType: ${taskType}`);
+                    this.showToast(`未知的任务类型: ${taskType}`, 'error');
+                    break;
             }
             this.runNextTask();
         }
@@ -1790,82 +3732,140 @@
             return true;
         }
 
-        addButton() {
+
+        addButton(features, options = {}) {
             const buttonExist = document.querySelector('.mfy-button-container');
             if (buttonExist) return;
-            const isFilePage = window.location.pathname === "/" && (window.location.search === "" || window.location.search.includes("homeFilePath"));
-            if (!isFilePage) return;
+
+            // const isFilePage = window.location.pathname === "/" &&
+            //     (window.location.search === "" || window.location.search.includes("homeFilePath"));
+            // if (!isFilePage) return;
+
             const container = document.querySelector('.home-operator-button-group');
             if (!container) return;
+
             const btnContainer = document.createElement('div');
             btnContainer.className = 'mfy-button-container';
-            btnContainer.style.position = 'relative';
-            btnContainer.style.display = 'inline-block';
+
             const btn = document.createElement('button');
-            btn.className = 'ant-btn css-dev-only-do-not-override-168k93g ant-btn-default ant-btn-color-default ant-btn-variant-outlined mfy-button create-button';
-            btn.style.background = "#4CAF50";
-            btn.style.color = "#fff";
-            btn.style.border = "none";
-            btn.innerHTML = `<svg x="1753345987410" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="2781" width="16" height="16"><path d="M395.765333 586.570667h-171.733333c-22.421333 0-37.888-22.442667-29.909333-43.381334L364.768 95.274667A32 32 0 0 1 394.666667 74.666667h287.957333c22.72 0 38.208 23.018667 29.632 44.064l-99.36 243.882666h187.050667c27.509333 0 42.186667 32.426667 24.042666 53.098667l-458.602666 522.56c-22.293333 25.408-63.626667 3.392-54.976-29.28l85.354666-322.421333z" fill="#ffffff" p-id="2782"></path></svg><span>秒传</span>`;
+            btn.className = 'ant-btn css-1bw9b22 ant-btn-primary ant-btn-variant-solid mfy-button upload-button'; // 利用现有样式
+            btn.style = "background-color: #5ebf70;";
+            btn.innerHTML = `${this.iconLibrary.transfer}<span>${options.buttonText || '秒传'}</span>`;
+
             const dropdown = document.createElement('div');
             dropdown.className = 'mfy-dropdown';
-            dropdown.style.display = 'none';
-            dropdown.style.position = 'absolute';
-            dropdown.style.top = 'calc(100% + 5px)';
-            dropdown.style.left = '0';
-            dropdown.style.backgroundColor = '#fff';
-            dropdown.style.border = '1px solid #d9d9d9';
-            dropdown.style.borderRadius = '10px';
-            dropdown.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
-            dropdown.style.zIndex = '1000';
-            dropdown.style.minWidth = '120px';
-            dropdown.style.overflow = 'hidden';
-            dropdown.innerHTML = `
-                <div class="mfy-dropdown-item" data-action="generate">生成秒传链接</div>
-                <div class="mfy-dropdown-item" data-action="save">保存秒传链接</div>
-            `;
-            const style = document.createElement('style');
-            style.textContent = `
-                .mfy-button-container:hover .mfy-dropdown { display: block !important; }
-                .mfy-dropdown-item { padding: 8px 12px; cursor: pointer; transition: background 0.3s; font-size: 14px; }
-                .mfy-dropdown-item:hover { background-color: #f5f5f5; }
-                .mfy-dropdown::before { content: ''; position: absolute; top: -5px; left: 0; width: 100%; height: 5px; background: transparent; }
-            `;
-            document.head.appendChild(style);
-            btnContainer.appendChild(btn);
-            btnContainer.appendChild(dropdown);
-            container.insertBefore(btnContainer, container.firstChild);
-            dropdown.querySelectorAll('.mfy-dropdown-item').forEach(item => {
-                item.addEventListener('click', async () => {
-                    const action = item.dataset.action;
-                    if (action === 'generate') {
-                        await this.addAndRunTask('generate');
-                    } else if (action === 'save') {
-                        await this.showInputModal();
+
+            // 根据功能列表创建下拉项
+            features.forEach(feature => {
+                const icon = this.iconLibrary[feature.iconKey] || feature.iconKey || '';
+                const itemElement = document.createElement('div');
+                itemElement.className = 'mfy-dropdown-item';
+                itemElement.innerHTML = `${icon}${feature.text}`;
+
+                itemElement.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    if (feature.handler && typeof feature.handler === 'function') {
+                        await feature.handler();
                     }
                     dropdown.style.display = 'none';
                 });
+
+                dropdown.appendChild(itemElement);
             });
-            btnContainer.addEventListener('mouseenter', function () {
+
+            btnContainer.appendChild(btn);
+            btnContainer.appendChild(dropdown);
+            container.insertBefore(btnContainer, container.firstChild);
+
+            // 下拉菜单交互逻辑
+            btnContainer.addEventListener('mouseenter', () => {
                 dropdown.style.display = 'block';
             });
-            btnContainer.addEventListener('mouseleave', function () {
-                let timer;
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    dropdown.style.display = 'none';
+
+            btnContainer.addEventListener('mouseleave', (e) => {
+                setTimeout(() => {
+                    if (!btnContainer.matches(':hover') && !dropdown.matches(':hover')) {
+                        dropdown.style.display = 'none';
+                    }
                 }, 300);
             });
         }
+
     }
 
+    class logger {
+        constructor(console) {
+            this.console = console;
+            this.debugMode = GlobalConfig.DEBUGMODE;
+        }
+        log(...args) {
+            // 非调试模式不输出
+            if (!GlobalConfig.DEBUGMODE) return;
+            this.console.log(...args);
+        }
+        error(...args) {
+            this.console.error(...args);
+        }
+        warn(...args) {
+            this.console.warn(...args);
+        }
+        info(...args) {
+            this.console.info(...args);
+        }
+    }
+
+    /**
+     * 初始化设置，从 GM 存储中加载
+     */
+    function initSettings() {
+        const Settings = GM_getValue('fastlink_settings', null);
+
+        if (Settings) {
+            try {
+                GlobalConfig = {
+                    ...GlobalConfig,
+                    ...Settings
+                };
+            } catch (e) {
+                console.error("加载设置失败:", e);
+                // 失败则重置设置
+                saveSettings({});
+            }
+        }
+    }
+    function saveSettings(settings) {
+        // 应用到GlobalConfig
+        GlobalConfig = {
+            ...GlobalConfig,
+            ...settings
+        };
+        GM_setValue('fastlink_settings', settings);
+    }
+
+    function isFirstTime() {
+        const firstTime = GM_getValue('fastlink_first_time', true);
+        if (firstTime) {
+            GM_setValue('fastlink_first_time', false);
+        }
+        return firstTime;
+    }
+
+    initSettings();
+    // 创建 logger 实例, 并覆盖全局 console
+    var console = new logger(window.console);
     const apiClient = new PanApiClient();
     const selector = new TableRowSelector();
     const shareLinkManager = new ShareLinkManager(apiClient);
-    const uiManager = new UiManager(shareLinkManager, selector);
+    const uiManager = new UiManager(shareLinkManager, selector, isFirstTime());
 
     selector.init();
     uiManager.init();
 
+    if (GlobalConfig.DEBUGMODE) {
+        window._apiClient = apiClient;
+        window._shareLinkManager = shareLinkManager;
+        window._selector = selector;
+        window._uiManager = uiManager;
+    }
 
 })();

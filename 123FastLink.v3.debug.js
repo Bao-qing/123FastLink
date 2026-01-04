@@ -2,45 +2,54 @@
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
 // @version      2026.1.01.1
-// @description  Creat and save 123pan instant links.
+// @description  123云盘秒传链接脚本
 // @author       Baoqing
 // @author       Chaofan
 // @author       lipkiat
 // @match        *://*.123pan.com/*
 // @match        *://*.123pan.cn/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=123pan.com
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @license      MIT
 // ==/UserScript==
 
 
 (function () {
     'use strict';
-    const GlobalConfig = {
-        scriptVersion: "3.1.1",
-        usesBase62EtagsInExport: true,
-        getFileListPageDelay: 500,
-        getFileInfoBatchSize: 100,
-        getFileInfoDelay: 200,
-        getFolderInfoDelay: 300,
-        saveLinkDelay: 100,
-        mkdirDelay: 100,
-        scriptName: "123FASTLINKV3",
-        COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$"
+    var GlobalConfig = {
+        scriptVersion: "3.1.1",                     // 脚本版本
+        usesBase62EtagsInExport: true,              // 导出时使用Base62编码的etag
+        getFileListPageDelay: 500,                  // 获取文件列表每页延时
+        getFileInfoBatchSize: 100,                  // 批量获取文件信息的数量
+        getFileInfoDelay: 200,                      // 获取文件信息延时
+        getFolderInfoDelay: 300,                    // 获取文件夹信息延时
+        saveLinkDelay: 100,                         // 保存链接延时
+        mkdirDelay: 100,                            // 创建文件夹延时
+        scriptName: "123FASTLINKV3",                // 脚本名称
+        COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$",   // 通用路径链接前缀V2
+        MAX_TEXT_FILE_SIZE: 3 * 1024 * 1024,        // 文本文件最大3MB
+        DEFAULT_EXPORT_FILENAME: "123FastLink_Export", // 默认导出文件名
+        DEBUGMODE: false,
+        seedFilePathId: null                        // 种子文件路径ID
     };
-    const DEBUG = true;
 
     // 1. 123云盘API通信类
     class PanApiClient {
         constructor() {
+            this.init();
+        }
+
+        init() {
             this.host = 'https://' + window.location.host;
             this.authToken = localStorage['authorToken'];
             this.loginUuid = localStorage['LoginUuid'];
             this.appVersion = '3';
             this.referer = document.location.href;
             this.getFileListPageDelay = GlobalConfig.getFileListPageDelay;
+            this.maxTextFileSize = GlobalConfig.MAX_TEXT_FILE_SIZE;
             this.progress = 0;
             this.progressDesc = "";
-
         }
 
         buildURL(path, queryParams) {
@@ -137,17 +146,17 @@
                 const reuse = response['data']['Reuse'];
                 console.log('[123FASTLINK] [PanApiClient]', 'reuse：', reuse);
                 if (response['code'] !== 0) {
-                    return [false, response['message']];
+                    return [false, response['message'], null];
                 }
                 if (!reuse) {
                     console.error('[123FASTLINK] [PanApiClient]', '保存文件失败:', fileInfo.fileName, 'response:', response);
-                    return [false, "未能实现秒传"];
+                    return [false, "未能实现秒传", null];
                 } else {
-                    return [true, null];
+                    return [true, null, response['data']['Info']['FileId']];
                 }
             } catch (error) {
                 console.error('[123FASTLINK] [PanApiClient]', '上传请求失败:', error);
-                return [false, '请求失败'];
+                return [false, '请求失败', null];
             }
         }
 
@@ -159,7 +168,12 @@
             return parentFileId.toString();
         }
 
-        // 获取文件
+        /**
+         * 获取文件，尝试秒传
+         * @param {dict} fileInfo - 文件信息字典，包含 etag, fileName, size 字段
+         * @param {string} parentFileId 
+         * @returns [boolean, string] - [是否成功, 错误信息]
+         */
         async getFile(fileInfo, parentFileId) {
             if (!parentFileId) {
                 parentFileId = await this.getParentFileId();
@@ -455,7 +469,14 @@
                 // 5. 检查是否秒传
                 if (uploadData.Reuse) {
                     console.log('[123FASTLINK] [文本上传]', '秒传成功，文件ID:', uploadData.FileId);
-                    return [true, "秒传成功", uploadData.FileId];
+                    return [true,
+                        "秒传成功",
+                        uploadData.FileId,
+                        {
+                            etag: md5,
+                            fileName: fileName,
+                            size: fileSize
+                        }];
                 }
 
                 // 6. 第二步：获取上传凭证
@@ -499,7 +520,13 @@
                 }
 
                 console.log('[123FASTLINK] [文本上传]', '上传完成，文件ID:', uploadData.FileId);
-                return [true, "上传完成", uploadData.FileId];
+                return [true, "上传完成", uploadData.FileId,
+                    {
+                        etag: md5,
+                        fileName: fileName,
+                        size: fileSize
+                    }
+                ];
 
             } catch (error) {
                 console.error('[123FASTLINK] [文本上传]', '文本上传流程失败:', error);
@@ -528,6 +555,338 @@
             const parentFileId = await this.getParentFileId();
             return await this.uploadTextFile(fileName, text, parentFileId, true);
         }
+
+        /**
+     * 第一步：获取下载调度列表
+     * @param {Object} fileInfo - 文件信息
+     * @param {string} fileInfo.etag - 文件MD5
+     * @param {string|number} fileInfo.fileId - 文件ID
+     * @param {string} fileInfo.s3keyFlag - S3 Key标志
+     * @param {string} fileInfo.fileName - 文件名
+     * @param {string|number} fileInfo.size - 文件大小
+     * @returns {Promise<Array>} [是否成功, 错误信息, 调度数据]
+     */
+        async getDispatchList(fileInfo) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '获取下载调度列表，文件:', fileInfo.fileName);
+
+                const data = await this.sendRequest('POST', '/b/api/v2/file/download_info', {}, JSON.stringify({
+                    driveId: 0,
+                    etag: fileInfo.etag,
+                    fileId: fileInfo.fileId.toString(),
+                    s3keyFlag: fileInfo.s3keyFlag,
+                    type: 0,  // 0-文件
+                    fileName: fileInfo.fileName,
+                    size: fileInfo.size.toString()
+                }));
+
+                console.log('[123FASTLINK] [下载API]', '获取下载调度列表响应:', data);
+
+                if (data.code !== 0) {
+                    console.error('[123FASTLINK] [下载API]', '获取下载调度列表失败:', data.message);
+                    return [false, data.message, null];
+                }
+
+                return [true, null, data.data];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '获取下载调度列表异常:', error);
+                return [false, '获取下载调度列表失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 第二步：获取下载链接
+         * 随机选择一个下载线路，拼接完整下载链接
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} fileInfo.etag - 文件MD5
+         * @param {string|number} fileInfo.fileId - 文件ID
+         * @param {string} fileInfo.s3keyFlag - S3 Key标志
+         * @param {string} fileInfo.fileName - 文件名
+         * @param {string|number} fileInfo.size - 文件大小
+         * @param {string} preferredIsp - 优先选择的ISP线路（可选）
+         * @returns {Promise<Array>} [是否成功, 错误信息, 下载链接]
+         */
+        async getDownloadLink(fileInfo, preferredIsp = null) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '获取下载链接，文件:', fileInfo.fileName);
+
+                // 1. 获取调度列表
+                const [dispatchSuccess, dispatchError, dispatchData] = await this.getDispatchList(fileInfo);
+                if (!dispatchSuccess) {
+                    return [false, dispatchError, null];
+                }
+
+                const { dispatchList, downloadPath } = dispatchData;
+
+                if (!dispatchList || dispatchList.length === 0) {
+                    return [false, '没有可用的下载线路', null];
+                }
+
+                if (!downloadPath) {
+                    return [false, '没有获取到下载路径', null];
+                }
+
+                // 2. 选择下载线路
+                let selectedDispatch = null;
+
+                if (preferredIsp) {
+                    // 如果指定了优先线路，尝试匹配
+                    selectedDispatch = dispatchList.find(item => item.isp === preferredIsp);
+                }
+
+                // 如果没有匹配到指定线路，随机选择一个
+                if (!selectedDispatch) {
+                    const randomIndex = Math.floor(Math.random() * dispatchList.length);
+                    selectedDispatch = dispatchList[randomIndex];
+                }
+
+                console.log('[123FASTLINK] [下载API]', '选择的下载线路:', selectedDispatch.isp, 'URL前缀:', selectedDispatch.prefix);
+
+                // 3. 拼接完整的下载链接
+                // 确保前缀不以斜杠结尾，路径以斜杠开头
+                const cleanPrefix = selectedDispatch.prefix.endsWith('/')
+                    ? selectedDispatch.prefix.slice(0, -1)
+                    : selectedDispatch.prefix;
+                const cleanPath = downloadPath.startsWith('/')
+                    ? downloadPath
+                    : '/' + downloadPath;
+
+                const downloadLink = `${cleanPrefix}${cleanPath}`;
+
+                console.log('[123FASTLINK] [下载API]', '完整下载链接:', downloadLink);
+
+                return [true, null, {
+                    downloadLink,
+                    isp: selectedDispatch.isp,
+                    prefix: selectedDispatch.prefix,
+                    downloadPath,
+                    fileId: fileInfo.fileId,
+                    fileName: fileInfo.fileName
+                }];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '获取下载链接异常:', error);
+                return [false, '获取下载链接失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 第三步：获取链接文本内容
+         * 通过GET请求下载链接，返回文本内容
+         * @param {string} downloadLink - 下载链接
+         * @param {Object} options - 可选参数
+         * @param {number} options.timeout - 超时时间（毫秒），默认30000
+         * @param {boolean} options.includeHeaders - 是否包含响应头信息
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文本内容/响应数据]
+         */
+        async getLinkTextContent(downloadLink, options = {}) {
+            const {
+                timeout = 30000,
+                includeHeaders = false
+            } = options;
+
+            try {
+                console.log('[123FASTLINK] [下载API]', '获取链接文本内容:', downloadLink);
+
+                // 使用AbortController实现超时控制
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+                try {
+                    const response = await fetch(downloadLink, {
+                        method: 'GET',
+                        signal: controller.signal,
+                        headers: {
+                            'Accept': 'text/plain,text/html,application/json,*/*',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        }
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    console.log('[123FASTLINK] [下载API]', '响应状态:', response.status, response.statusText);
+
+                    if (!response.ok) {
+                        // 尝试获取更多错误信息
+                        let errorText = '';
+                        try {
+                            errorText = await response.text();
+                            console.error('[123FASTLINK] [下载API]', '错误响应内容:', errorText);
+                        } catch (e) {
+                            // 忽略读取错误
+                        }
+
+                        return [false, `HTTP ${response.status}: ${response.statusText}`, null];
+                    }
+
+                    // 获取响应头
+                    const headers = {};
+                    response.headers.forEach((value, key) => {
+                        headers[key] = value;
+                    });
+
+                    // 获取文本内容
+                    const textContent = await response.text();
+                    console.log('[123FASTLINK] [下载API]', '获取到文本内容，长度:', textContent.length, '字符');
+
+                    if (includeHeaders) {
+                        return [true, null, {
+                            content: textContent,
+                            headers: headers,
+                            status: response.status,
+                            statusText: response.statusText
+                        }];
+                    } else {
+                        return [true, null, textContent];
+                    }
+
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    throw fetchError;
+                }
+
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.error('[123FASTLINK] [下载API]', '请求超时:', timeout, 'ms');
+                    return [false, `请求超时 (${timeout}ms)`, null];
+                }
+
+                console.error('[123FASTLINK] [下载API]', '获取链接文本内容异常:', error);
+                return [false, '获取链接文本内容失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 完整的下载文本文件流程
+         * 整合上述三个步骤，从文件信息直接获取文本内容
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} fileInfo.etag - 文件MD5
+         * @param {string|number} fileInfo.fileId - 文件ID
+         * @param {string} fileInfo.s3keyFlag - S3 Key标志
+         * @param {string} fileInfo.fileName - 文件名
+         * @param {string|number} fileInfo.size - 文件大小
+         * @param {string} preferredIsp - 优先选择的ISP线路（可选）
+         * @param {Object} options - 可选参数
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文本内容]
+         */
+        async downloadTextFile(fileInfo, preferredIsp = null, options = {}) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '开始下载文本文件:', fileInfo.fileName);
+
+                // 1. 获取下载链接
+                console.log('[123FASTLINK] [下载API]', '步骤1: 获取下载链接');
+                const [linkSuccess, linkError, linkData] = await this.getDownloadLink(fileInfo, preferredIsp);
+                if (!linkSuccess) {
+                    return [false, '获取下载链接失败: ' + linkError, null];
+                }
+
+                const { downloadLink } = linkData;
+
+                // 2. 获取文本内容
+                console.log('[123FASTLINK] [下载API]', '步骤2: 获取文本内容');
+                const [contentSuccess, contentError, content] = await this.getLinkTextContent(downloadLink, options);
+
+                if (!contentSuccess) {
+                    return [false, '获取文本内容失败: ' + contentError, null];
+                }
+
+                console.log('[123FASTLINK] [下载API]', '下载完成，文件:', fileInfo.fileName);
+                return [true, null, content];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '下载文本文件流程异常:', error);
+                return [false, '下载文本文件失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 通过文件ID获取文件信息并下载
+         * 这是一个便捷方法，先通过fileId获取文件信息，然后下载
+         * @param {string|number} fileId - 文件ID
+         * @param {string} preferredIsp - 优先选择的ISP线路（可选）
+         * @returns {Promise<Array>} [是否成功, 错误信息, 文本内容]
+         */
+        async downloadTextFileById(fileId, preferredIsp = null) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '通过文件ID下载文本文件:', fileId);
+
+                // 1. 先获取文件信息
+                const fileInfoResponse = await this.getFileInfo([fileId]);
+                // 检查文件大小
+                if (fileInfoResponse.data.InfoList[0].Size > this.maxTextFileSize) {
+                    return [false, `文件过大，无法作为文本下载（最大支持 ${this.maxTextFileSize} 字节）`, null];
+                }
+                if (!fileInfoResponse.data.InfoList || fileInfoResponse.data.InfoList.length === 0) {
+                    return [false, '文件不存在或无法访问', null];
+                }
+
+                const fileData = fileInfoResponse.data.InfoList[0];
+
+                // 2. 构建文件信息对象
+                const fileInfo = {
+                    fileId: fileData.FileId,
+                    etag: fileData.Etag,
+                    s3keyFlag: fileData.S3KeyFlag,
+                    fileName: fileData.FileName,
+                    size: fileData.Size
+                };
+
+                // 为防止非文本文件过大造成卡顿，对文件最大值进行限制
+                if (fileInfo.size > this.maxTextFileSize) {
+                    return [false, `文件过大，无法作为文本下载（最大支持 ${this.maxTextFileSize} 字节）`, null];
+                }
+                console.log('[123FASTLINK] [下载API]', '获取到文件信息:', fileInfo);
+
+                // 3. 下载文件
+                return await this.downloadTextFile(fileInfo, preferredIsp);
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '通过文件ID下载异常:', error);
+                return [false, '通过文件ID下载失败: ' + error.message, null];
+            }
+        }
+
+        /**
+         * 下载文件并保存为Blob（适用于二进制文件）
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} preferredIsp - 优先选择的ISP线路
+         * @returns {Promise<Array>} [是否成功, 错误信息, Blob对象]
+         */
+        async downloadFileAsBlob(fileInfo, preferredIsp = null) {
+            try {
+                console.log('[123FASTLINK] [下载API]', '下载文件为Blob:', fileInfo.fileName);
+
+                // 1. 获取下载链接
+                const [linkSuccess, linkError, linkData] = await this.getDownloadLink(fileInfo, preferredIsp);
+                if (!linkSuccess) {
+                    return [false, linkError, null];
+                }
+
+                const { downloadLink } = linkData;
+
+                // 2. 下载为Blob
+                const response = await fetch(downloadLink, {
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    }
+                });
+
+                if (!response.ok) {
+                    return [false, `HTTP ${response.status}: ${response.statusText}`, null];
+                }
+
+                const blob = await response.blob();
+                console.log('[123FASTLINK] [下载API]', '下载Blob完成，大小:', blob.size, '字节');
+
+                return [true, null, blob];
+
+            } catch (error) {
+                console.error('[123FASTLINK] [下载API]', '下载文件为Blob异常:', error);
+                return [false, '下载文件失败: ' + error.message, null];
+            }
+        }
     }
 
     // 2. 选中文件管理类
@@ -539,12 +898,25 @@
             this._inited = false;
         }
 
+        // 暂时没有用到
+        deconstructor() {
+            if (this.observer) {
+                this.observer.disconnect();
+            }
+            this.observer = null;
+            if (this.originalCreateElement) {
+                document.createElement = this.originalCreateElement;
+            }
+        }
+
         init() {
             if (this._inited) return;
             this._inited = true;
 
             // 保存原始 createElement 方法
             const originalCreateElement = document.createElement;
+            this.originalCreateElement = originalCreateElement;
+
             const self = this;
             document.createElement = function (tagName, options) {
                 const element = originalCreateElement.call(document, tagName, options);
@@ -609,10 +981,56 @@
         }
 
         _bindSelectAllEvent(checkbox) {
-            if (checkbox.dataset.selectAllBound) return;
-            checkbox.dataset.selectAllBound = 'true';
-            checkbox.addEventListener('click', () => {
-                if (checkbox.checked) {
+            // if (checkbox.dataset.selectAllBound) return;
+            // checkbox.dataset.selectAllBound = 'true';
+            // checkbox.addEventListener('change',  () => {
+            //     console.log('[123FASTLINK] [Selector] 全选框状态改变:', checkbox.checked);
+            //     if (checkbox.checked) {
+            //         this.isSelectAll = true;
+            //         this.unselectedRowKeys = [];
+            //         this.selectedRowKeys = [];
+            //     } else {
+            //         this.isSelectAll = false;
+            //         this.selectedRowKeys = [];
+            //         this.unselectedRowKeys = [];
+            //     }
+            // });
+            this._onSelectAllChange(checkbox);
+        }
+
+        _onSelectAllChange(checkbox) {
+            const targetElement = checkbox.parentElement;
+            const self = this;
+            // 创建观察器
+            this.observer = new MutationObserver(function (mutations) {
+                mutations.forEach(function (mutation) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                        console.log('Class changed!');
+                        console.log('旧值:', mutation.oldValue);
+                        console.log('新值:', targetElement.className);
+
+                        onClassChanged.call(self, targetElement);
+                    }
+                });
+            });
+
+            // 配置观察选项
+            const config = {
+                attributes: true,           // 监听属性变化
+                attributeOldValue: true,    // 记录旧值
+                attributeFilter: ['class']  // 只监听 class 属性
+            };
+
+            // 开始观察
+            this.observer.observe(targetElement, config);
+
+            // 处理函数
+            function onClassChanged(element) {
+                console.log('处理 class 变化:', element.className);
+                if (element.classList.contains('ant-checkbox-indeterminate')) {
+                    // 半选状态，不处理
+                } else if (element.classList.contains('ant-checkbox-checked')) {
+                    // 全选状态
                     this.isSelectAll = true;
                     this.unselectedRowKeys = [];
                     this.selectedRowKeys = [];
@@ -621,8 +1039,10 @@
                     this.selectedRowKeys = [];
                     this.unselectedRowKeys = [];
                 }
-                this._outputSelection();
-            });
+
+            }
+
+            // observer.disconnect();
         }
 
         _outputSelection() {
@@ -650,7 +1070,11 @@
     class ShareLinkManager {
         constructor(apiClient) {
             this.apiClient = apiClient;
-            // this.selector = selector;
+            this.init();
+        }
+
+        init() {
+            this.apiClient.init();
             this.progress = 0;
             this.progressDesc = "";
             this.taskCancel = false; // 取消当前任务的请求标志
@@ -659,12 +1083,13 @@
             this.getFolderInfoDelay = GlobalConfig.getFolderInfoDelay;
             this.saveLinkDelay = GlobalConfig.saveLinkDelay;
             this.mkdirDelay = GlobalConfig.mkdirDelay;
-            this.fileInfoList = [];
+            this.fileInfoList = []; // TODO fileInfoList传递方式不合理
             // this.scriptName = GlobalConfig.scriptName,
             this.commonPath = "";
             this.COMMON_PATH_LINK_PREFIX_V2 = GlobalConfig.COMMON_PATH_LINK_PREFIX_V2;
             this.usesBase62EtagsInExport = GlobalConfig.usesBase62EtagsInExport;
             this.scriptVersion = GlobalConfig.scriptVersion;
+            this.defaultExportName = GlobalConfig.DEFAULT_EXPORT_FILENAME;
         }
 
         /**
@@ -870,10 +1295,16 @@
             // 获取选中的文件（文件夹）的详细信息
             // this.fileInfoList, this.commonPath
             const result = await this._getSelectedFilesInfo(fileSelectionDetails);
-            if (!result) return '';
+            if (!result) return [false, "未选择文件", ""];
             //// if (hasFolder) alert("文件夹暂时无法秒传，将被忽略");
+            let allFilePath = [];
+            for (const fileInfo of this.fileInfoList) {
+                if (fileInfo.type !== 1) {
+                    allFilePath.push(fileInfo.path);
+                }
+            }
             this.progressDesc = "秒传链接生成完成";
-            return this.buildShareLink(this.fileInfoList, this.commonPath);
+            return [...this.buildShareLink(this.fileInfoList, this.commonPath), allFilePath];
         }
 
         /**
@@ -887,14 +1318,21 @@
                 //}
             }).filter(Boolean).join('$');
             const shareLink = `${this.COMMON_PATH_LINK_PREFIX_V2}${commonPath}%${shareLinkFileInfo}`;
-            return shareLink;
+            return [true, null, shareLink];
+        }
+
+        _isValidEtag(etag) {
+            // 简单校验etag格式为32位十六进制字符串或Base62字符串
+            const hexRegex = /^[a-fA-F0-9]{32}$/;
+            const base62Regex = /^[A-Za-z0-9]{22}$/;
+            return hexRegex.test(etag) || base62Regex.test(etag);
         }
 
         /**
-         * 解析秒传链接
+         * 解析文本秒传链接
          * @param {*} shareLink     秒传链接
          * @param {*} InputUsesBase62  输入是否使用Base62
-         * @param {*} outputUsesBase62 输出是否使用Base62
+         * @param {*} outputUsesBase62 函数输出是否使用Base62，本脚本中使用hex传递，默认false
          * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
          */
         _parseTextShareLink(shareLink, InputUsesBase62 = true, outputUsesBase62 = false) {
@@ -913,7 +1351,7 @@
 
                 } else {
                     console.error('[123FASTLINK] [ShareLinkManager]', '不支持的公共路径格式', commonPathLinkPrefix);
-                    return "[123FASTLINK] [ShareLinkManager] 不支持的公共路径格式:" + commonPathLinkPrefix;
+                    return [false, '不支持的公共路径格式', null];
                 }
 
             } else {
@@ -923,16 +1361,68 @@
 
             const shareLinkList = Array.from(shareFileInfo.replace(/\r?\n/g, '$').split('$'));
             this.commonPath = commonPath;
-            return shareLinkList.map(singleShareLink => {
+            let failList = [];
+            const fileList = shareLinkList.map(singleShareLink => {
                 const singleFileInfoList = singleShareLink.split('#');
                 if (singleFileInfoList.length < 3) return null;
+                const etag = InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this._base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this._hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]);
+                let failed = false;
+                // etag校验
+                if (!this._isValidEtag(etag)) {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', etag);
+                    failed = true;
+                }
+                const size = singleFileInfoList[1];
+                if (isNaN(size) || Number(size) < 0) {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件大小:', size);
+                    failed = true;
+                }
+                if (!singleFileInfoList[2]) {
+                    console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件路径:', singleFileInfoList[2]);
+                    failed = true;
+                }
+                if (failed) {
+                    failList.push({
+                        etag: etag,
+                        size: size,
+                        path: singleFileInfoList[2],
+                        fileName: singleFileInfoList[2].split('/').pop()
+                    });
+                    return null;
+                }
                 return {
-                    etag: InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this._base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this._hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]),
-                    size: singleFileInfoList[1],
+                    // etag: InputUsesBase62 ? (outputUsesBase62 ? singleFileInfoList[0] : this._base62ToHex(singleFileInfoList[0])) : (outputUsesBase62 ? this._hexToBase62(singleFileInfoList[0]) : singleFileInfoList[0]),
+                    etag: etag,
+                    size: size,
                     path: singleFileInfoList[2],
                     fileName: singleFileInfoList[2].split('/').pop()
                 };
             }).filter(Boolean);
+            if (fileList.length === 0) {
+                return [false, '未解析到有效的文件信息', null, failList];
+            }
+            return [true, null, fileList, failList];
+        }
+
+        /**
+         * 自动判断秒传链接格式并解析
+         * @param {string} shareLink 
+         */
+        async parseShareLink(shareLink) {
+            let result = null;
+            try {
+                // 尝试作为JSON解析
+                const jsonData = this.safeParse(shareLink);
+                if (jsonData) {
+                    result = await this._parseJsonShareLink(jsonData);
+                } else {
+                    // 作为普通秒传链接处理
+                    result = await this._parseTextShareLink(shareLink, this.usesBase62EtagsInExport, false);
+                }
+            } catch (error) {
+                return [false, '保存失败: ' + error.message, result];
+            }
+            return result;
         }
 
         /**
@@ -1048,41 +1538,55 @@
             };
         }
 
-        /**
-         * 保存秒传链接
-         */
-        async saveTextShareLink(shareLink) {
-            const shareFileList = this._parseTextShareLink(shareLink);
-            return this._saveFileList(await this._makeDirForFiles(shareFileList));
-        }
+        // /**
+        //  * 保存秒传链接
+        //  */
+        // async saveTextShareLink(shareLink) {
+        //     const shareFileList = this._parseTextShareLink(shareLink);
+        //     return this._saveFileList(await this._makeDirForFiles(shareFileList));
+        // }
+
+        // /**
+        //  * 保存JSON格式的秒传链接
+        //  * @param {string} jsonContent
+        //  * @returns {Promise<object>} - 保存结果
+        //  */
+        // async saveJsonShareLink(jsonContent) {
+        //     const shareFileList = this._parseJsonShareLink(jsonContent);
+        //     return this._saveFileList(await this._makeDirForFiles(shareFileList));
+        // }
 
         /**
-         * 保存JSON格式的秒传链接
-         * @param {string} jsonContent
+         *  保存秒传链接（自动判断格式）
+         * @param {string} content 
          * @returns {Promise<object>} - 保存结果
+         * {success: [], failed: []}
          */
-        async saveJsonShareLink(jsonContent) {
-            const shareFileList = this._parseJsonShareLink(jsonContent);
-            return this._saveFileList(await this._makeDirForFiles(shareFileList));
-        }
-
         async saveShareLink(content) {
             let saveResult = { success: [], failed: [] };
-            try {
-                // 尝试作为JSON解析
-                const jsonData = this.safeParse(content);
-                if (jsonData) {
-                    saveResult = await this.saveJsonShareLink(jsonData);
-                } else {
-                    // 作为普通秒传链接处理
-                    saveResult = await this.saveTextShareLink(content);
-                    console.log('保存结果:', saveResult);
-                }
-            } catch (error) {
-                console.error('保存失败:', error);
-                saveResult = { success: [], failed: [] };
+            // try {
+            //     // 尝试作为JSON解析
+            //     const jsonData = this.safeParse(content);
+            //     if (jsonData) {
+            //         saveResult = await this.saveJsonShareLink(jsonData);
+            //     } else {
+            //         // 作为普通秒传链接处理
+            //         saveResult = await this.saveTextShareLink(content);
+            //         console.log('保存结果:', saveResult);
+            //     }
+            // } catch (error) {
+            //     console.error('保存失败:', error);
+            //     saveResult = { success: [], failed: [] };
+            //     return [false, '保存失败: ' + error.message, saveResult];
+            // }
+            const fileInfoList = await this.parseShareLink(content);
+            if (!fileInfoList[0]) {
+                saveResult.failed.push(...fileInfoList[3]); // 添加解析失败的文件
+                return [false, '保存失败: ' + fileInfoList[1], saveResult];
             }
-            return saveResult;
+            saveResult = await this._saveFileList(await this._makeDirForFiles(fileInfoList[2]));
+            saveResult.failed.push(...fileInfoList[3]); // 添加解析失败的文件
+            return [true, null, saveResult];
         }
 
         async saveShareLinkOnlyText(shareLink, fileName) {
@@ -1092,11 +1596,114 @@
         /**
          * 重试保存失败的文件
          * @param {*} FileList - 包含parentFolderId - {etag: string, size: number, path: string, fileName: string, parentFolderId: number}
-         * 失败的文件列表 - this.saveShareLink().failed
+         * 失败的文件列表 - this.saveShareLink()[2].failed
          * @returns
          */
         async retrySaveFailed(FileList) {
-            return this._saveFileList(FileList);
+            return [true, null, await this._saveFileList(FileList)];
+        }
+
+        // ------------------二级秒传链接相关----------------------
+        /**
+         * 获取文件内容为文本
+         * @param {string} fileId 
+         * @returns [boolean, string, string] - 是否成功, 错误信息, 文本内容
+         */
+        async getFileContentAsText(fileId) {
+            const fileTextInfo = await this.apiClient.downloadTextFileById(fileId);
+            if (!fileTextInfo[0]) {
+                return [false, fileTextInfo[1], null];
+            }
+            return [true, null, fileTextInfo[2]];
+        }
+
+        /**
+         * 从文本文件获取并保存秒传链接
+         * @param {string} fileId - 二级秒传链接文件ID
+         * @returns 
+         */
+        async saveShareLinkFile(fileId) {
+            const [downloadSuccess, downloadError, fileContent] = await this.getFileContentAsText(fileId);
+            if (!downloadSuccess) {
+                return [false, '获取文件内容失败: ' + downloadError, null];
+            }
+            return await this.saveShareLink(fileContent);
+        }
+
+        async saveSecondaryShareLink(secondaryLink, seedFilePathId = null) {
+
+            if (seedFilePathId && seedFilePathId.toString().length !== 8) {
+                return [false, '种子文件路径ID无效，请清除路径', null];
+            }
+            // 提取文件信息
+            const secondaryFileInfoRes = await this.parseShareLink(secondaryLink);
+            if (!secondaryFileInfoRes[0]) {
+                return [false, '解析二级秒传链接失败: ' + secondaryFileInfoRes[1], null];
+            }
+            const secondaryFileInfo = secondaryFileInfoRes[2];
+            if (secondaryFileInfo.length !== 1) {
+                return [false, '二级秒传链接格式错误，应该只包含一个文件', null];
+            }
+            // 保存文件（要先保存才能获取文件内容）
+            this.progress = 10;
+            this.progressDesc = "正在保存二级秒传链接文件...";
+            const saveResult = await this.apiClient.getFile({
+                etag: secondaryFileInfo[0].etag, size: secondaryFileInfo[0].size, fileName: secondaryFileInfo[0].fileName
+            }
+                , seedFilePathId);
+            if (!saveResult[0]) {
+                return [false, '保存二级秒传链接文件失败: ' + saveResult[1], null];
+            }
+            // 获取文件内容
+            this.progress = 50;
+            this.progressDesc = "正在获取二级秒传链接文件内容...";
+            const getResult = await this.getFileContentAsText(saveResult[2]);
+            const [downloadSuccess, downloadError, fileContent] = getResult;
+            if (!downloadSuccess) {
+                return [false, '获取文件内容失败: ' + downloadError, null];
+            }
+            this.progress = 70;
+            this.progressDesc = "正在保存秒传链接...";
+            return await this.saveShareLink(fileContent);
+        }
+
+        /**
+         * 
+         * @param {dict} fileSelectionDetails - 文件选择
+         * @param {*} fileName - 二级秒传链接文件名
+         * @returns 
+         */
+        async generateSecondaryShareLink(fileSelectionDetails, fileName, seedFilePathId = null) {
+            if (seedFilePathId && seedFilePathId.toString().length !== 8) {
+                return [false, '种子文件路径ID无效，请清除路径', null];
+            }
+            // 固定parentFolderId为当前文件夹,防止用户切换页面
+            let parentFolderId = null;
+            if (seedFilePathId) {
+                parentFolderId = seedFilePathId;
+            } else {
+                parentFolderId = await this.apiClient.getParentFileId();
+            }
+            // 先根据fileSelectionDetails 生成一级秒传链接
+            const [linkSuccess, linkError, shareLink] = await this.generateShareLink(fileSelectionDetails);
+            if (!linkSuccess) {
+                return [false, '生成一级秒传链接失败: ' + linkError, null];
+            }
+            // 判断文件名
+            if (!fileName || fileName.trim() === '') {
+                fileName = this.getExportFilename(shareLink) + '.123fastlink.txt';
+            }
+            // 然后保存为文本文件
+            const saveResult = await this.apiClient.createTextFileInFolder(fileName, shareLink, parentFolderId);
+            if (!saveResult[0]) {
+                return [false, '保存一级秒传链接文件失败: ' + saveResult[1], null];
+            }
+            // const fileId =  saveResult[2];
+            const fileInfo = saveResult[3]; // {fileName, etag, size}
+            fileInfo.path = fileName;
+            // 最后生成二级秒传链接
+            const secondaryShareLink = this.buildShareLink([fileInfo], '')[2];
+            return [true, null, secondaryShareLink];
         }
 
         // -------------------JSON相关-----------------------
@@ -1142,20 +1749,42 @@
         /**
          * 解析JSON格式的秒传链接
          * @param {object} jsonData
-         * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
+         * @returns {Array} - [boolean, string, [{etag: string, size: number, path: string, fileName: string}]] - 是否成功, 错误信息, 文件列表
          */
         _parseJsonShareLink(jsonData) {
-            this.commonPath = jsonData['commonPath'] || '';
-            const shareFileList = jsonData['files'];
-            if (jsonData['usesBase62EtagsInExport']) {
-                shareFileList.forEach(file => {
-                    file.etag = this._base62ToHex(file.etag);
-                });
+            // 如果是字符串，先尝试解析为JSON对象
+            if (typeof jsonData === 'string') {
+                jsonData = this.safeParse(jsonData);
+                if (!jsonData) {
+                    return [false, '无效的JSON格式', null];
+                }
             }
-            shareFileList.forEach(file => {
-                file.fileName = file.path.split('/').pop();
-            });
-            return shareFileList;
+            let failedList = [];
+            try {
+                this.commonPath = jsonData['commonPath'] || '';
+                const shareFileList = jsonData['files'];
+                if (jsonData['usesBase62EtagsInExport']) {
+                    shareFileList.forEach(file => {
+                        file.etag = this._base62ToHex(file.etag);
+                        if (!this._isValidEtag(file.etag)) {
+                            console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', file.etag);
+                            failedList.push({
+                                etag: file.etag,
+                                size: file.size,
+                                path: file.path,
+                                fileName: file.path.split('/').pop()
+                            });
+                        }
+                    });
+                }
+                shareFileList.forEach(file => {
+                    file.fileName = file.path.split('/').pop();
+                });
+                return [true, null, shareFileList, failedList];
+            } catch (error) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析JSON格式秒传链接失败:', error);
+                return [false, '解析JSON格式秒传链接失败: ' + error.message, null];
+            }
         }
 
         // 格式化文件大小
@@ -1177,37 +1806,99 @@
          */
         shareLinkToJson(shareLink) {
             const fileInfo = this._parseTextShareLink(shareLink);
-            if (fileInfo.length === 0) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+            if (!fileInfo[0]) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', fileInfo[1]);
                 return {
-                    error: '解析秒传链接失败'
+                    error: '解析秒传链接失败: ' + fileInfo[1]
                 };
             }
+            const fileInfoData = fileInfo[2];
+            if (fileInfoData.length === 0) {
+                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+                return [false, '解析秒传链接失败: 文件列表为空', null];
+            }
             if (this.usesBase62EtagsInExport) {
-                fileInfo.forEach(f => {
+                fileInfoData.forEach(f => {
                     f.etag = this._hexToBase62(f.etag);
                 });
             }
-            const totalSize = fileInfo.reduce((sum, f) => sum + Number(f.size), 0);
-            return {
+            const totalSize = fileInfoData.reduce((sum, f) => sum + Number(f.size), 0);
+            const jsonData = {
                 scriptVersion: this.scriptVersion,
                 exportVersion: "1.0",
                 usesBase62EtagsInExport: this.usesBase62EtagsInExport,
                 commonPath: this.commonPath,
-                totalFilesCount: fileInfo.length,
+                totalFilesCount: fileInfoData.length,
                 totalSize,
                 formattedTotalSize: this._formatSize(totalSize),
-                files: fileInfo.map(f => ({
+                files: fileInfoData.map(f => ({
                     // 去掉fileName
                     ...f, fileName: undefined
                 }))
             };
+            return [true, null, jsonData];
         }
+
+        /**
+         * 从JSON格式生成文本秒传链接
+         * @param {string} jsonText 
+         * @returns    {boolean, string, string} - 是否成功, 错误信息, 秒传链接
+         */
+        jsonToTextShareLink(jsonText) {
+            const jsonData = this.safeParse(jsonText);
+            if (!this.validateJson(jsonData)) {
+                return [false, '无效的JSON格式', null];
+            }
+            const shareFileList = this._parseJsonShareLink(jsonData);
+            if (!shareFileList[0]) {
+                return [false, '解析JSON失败: ' + shareFileList[1], null];
+            }
+
+            return this.buildShareLink(shareFileList[2], this.commonPath);
+        }
+        // -------------------工具函数----------------------- 
+        /**
+         * 获取导出文件名，默认根据公共路径或第一个文件名生成，不带扩展名
+         * @param {string} shareLink 
+         * @param {string} defaultName 
+         * @returns 
+         */
+        getExportFilename(shareLink, defaultName = this.defaultExportName) {
+            if (this.commonPath) {
+                const commonPath = this.commonPath.replace(/\/$/, ''); // 去除末尾斜杠
+                return `${commonPath}`;
+            }
+            const lines = shareLink.trim().split('\n').filter(Boolean);
+            if (lines.length === 0) return defaultName;
+            const firstLine = lines[0];
+            const parts = firstLine.split('#');
+            if (parts.length >= 3) {
+                const fileName = parts[2];
+                const baseName = fileName.split('/').pop().split('.')[0] || 'export';
+                return `${baseName}`;
+            }
+            return defaultName;
+        }
+
+        linkChecker(shareLink) {
+            if (!shareLink || shareLink.trim() === '') {
+                return [false, '链接为空'];
+            }
+            if (this._parseTextShareLink(shareLink)[0]) {
+                return [true, null, "text"];
+            }
+            if (this._parseJsonShareLink(shareLink)[0]) {
+                return [true, null, "json"];
+            }
+            return [false, '无效的秒传链接格式', null];
+        }
+
     }
 
     // 4. UI管理类
     class UiManager {
-        constructor(shareLinkManager, selector) {
+        constructor(shareLinkManager, selector, firstTime = false) {
+            this.firstTime = firstTime;
             this.shareLinkManager = shareLinkManager;
             this.selector = selector;
             this.isProgressMinimized = false;
@@ -1219,6 +1910,22 @@
             this.taskIdCounter = 0; // 任务ID计数器
             this.currentTask = null; // 当前正在执行的任务
             // this.taskCancel = false; // 取消当前任务的请求标志
+            this.settings = [
+                { key: "scriptVersion", label: "脚本版本", type: "text", value: this.shareLinkManager.scriptVersion, readonly: true },
+                { key: "COMMON_PATH_LINK_PREFIX_V2", label: "公共路径链接前缀", type: "text", value: this.shareLinkManager.COMMON_PATH_LINK_PREFIX_V2, readonly: true },
+                { key: "DEFAULT_EXPORT_FILENAME", label: "默认导出文件名", type: "text", value: this.shareLinkManager.defaultExportName, description: "当无法从公共路径或文件名生成时使用此默认名称" },
+                { key: "seedFilePathId", label: "种子文件夹ID", type: "number", value: GlobalConfig.seedFilePathId, description: "用于保存二级秒传链接文件的文件夹ID，留空则使用当前文件夹" },
+                { key: "usesBase62EtagsInExport", label: "Base62编码", type: "checkbox", value: GlobalConfig.usesBase62EtagsInExport, description: "Base62编码的etag可以减少链接长度，但不兼容旧版本脚本" },
+                { key: "getFileListPageDelay", label: "获取文件列表每页延时 (毫秒)", type: "number", value: GlobalConfig.getFileListPageDelay },
+                { key: "getFileInfoBatchSize", label: "批量获取文件信息的数量", type: "number", value: GlobalConfig.getFileInfoBatchSize },
+                { key: "getFileInfoDelay", label: "获取文件信息延时 (毫秒)", type: "number", value: GlobalConfig.getFileInfoDelay },
+                { key: "getFolderInfoDelay", label: "获取文件夹信息延时 (毫秒)", type: "number", value: GlobalConfig.getFolderInfoDelay },
+                { key: "saveLinkDelay", label: "保存链接延时 (毫秒)", type: "number", value: GlobalConfig.saveLinkDelay },
+                { key: "mkdirDelay", label: "创建文件夹延时 (毫秒)", type: "number", value: GlobalConfig.mkdirDelay },
+                { key: "maxTextFileSize", label: "文本文件最大大小 (字节)", type: "number", value: GlobalConfig.MAX_TEXT_FILE_SIZE },
+                { key: "DEBUGMODE", label: "调试模式", type: "checkbox", value: GlobalConfig.DEBUGMODE, description: "启用调试模式，页面刷新后生效" }
+            ];
+
             this.iconLibrary = {
                 transfer: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="16 18 22 12 16 6"></polyline>
@@ -1232,8 +1939,35 @@
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                             <polyline points="17 21 17 13 7 13 7 21"></polyline>
                             <polyline points="7 3 7 8 15 8"></polyline>
-                        </svg>`
+                        </svg>`,
+                generateSecondary: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>`,
+
+                saveSecondary: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>`,
+                getFromFile: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                    <polyline points="13 2 13 9 20 9"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="9"></line>
+                    <polyline points="9 12 12 9 15 12"></polyline>
+                </svg>`,
+                settings: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>`
             };
+
+            this.resetSettings();
+        }
+
+        resetSettings() {
+            this.maxTextFileSize = GlobalConfig.MAX_TEXT_FILE_SIZE;
+            this.seedFilePathId = GlobalConfig.seedFilePathId;
         }
 
         /**
@@ -1241,6 +1975,7 @@
          */
         init() {
             // 按钮插入 ==========================================
+            // todo: 二级链接转换
             const features = [
                 {
                     iconKey: 'generate',
@@ -1251,6 +1986,31 @@
                     iconKey: 'save',
                     text: '保存秒传链接',
                     handler: () => this.showInputModal()
+                },
+                {
+                    iconKey: 'generateSecondary',
+                    text: '生成二级链接',
+                    handler: () => this.addAndRunTask('generateSecondary')
+                },
+                {
+                    iconKey: 'saveSecondary',
+                    text: '保存二级链接',
+                    handler: () => this.showInputModal("saveSecondary", false, '保存二级链接')
+                },
+                {
+                    iconKey: 'transfer',
+                    text: '转换链接格式',
+                    handler: () => this.showInputModal("convert", false, '确定')
+                },
+                {
+                    iconKey: 'getFromFile',
+                    text: '从秒传文件获取',
+                    handler: () => this.addAndRunTask('saveFromFile')
+                },
+                {
+                    iconKey: 'settings',
+                    text: '设置',
+                    handler: () => this.showSettingsModal()
                 }
             ];
 
@@ -1284,6 +2044,30 @@
             };
 
             window.addEventListener('popstate', triggerUrlChange);
+
+            // 首次运行提示
+            if (this.firstTime) {
+                setTimeout(() => {
+                    this.showFirstTimeGuide();
+                }, 1000);
+            }
+        }
+
+        saveSettings() {
+            // 保存设置
+            const newSettings = {};
+            this.settings.forEach(setting => {
+                if (!setting.readonly) {
+                    newSettings[setting.key] = setting.value;
+                }
+            });
+
+            // 全局保存函数
+            saveSettings(newSettings);
+            // 应用到ShareLinkManager
+            this.shareLinkManager.init();
+
+            this.resetSettings();
         }
 
         /**
@@ -1413,6 +2197,60 @@
                 }@keyframes pulse{0%,100%{opacity:1}
                 50%{opacity:0.5}
                 }.animate-pulse{animation:pulse 2s cubic-bezier(0.4,0,0.6,1) infinite}
+                /* ============================================================
+                设置页面样式
+                ============================================================ */
+                /* 1. 容器与布局 */
+                .settings-container {display: flex;flex-direction: column;gap: 12px;padding: 4px 0;}
+                /* 2. 设置行项目 - 卡片感设计 */
+                .setting-row {display: flex;align-items: center;justify-content: space-between;padding: 16px;background: var(--surface);border-radius: var(--radius);transition: var(--transition);border: 1px solid transparent;}
+                .setting-row:hover {background: #ffffff;border-color: var(--border);box-shadow: var(--shadow-sm);transform: translateY(-1px);}
+                .setting-row.readonly {opacity: 0.6;cursor: not-allowed;}
+                /* 3. 文本信息区 */
+                .setting-info {display: flex;flex-direction: column;gap: 4px;flex: 1;padding-right: 24px;}
+                .setting-label-text {font-size: 14.5px;font-weight: 600;color: var(--text-primary);letter-spacing: 0.3px;}
+                .setting-describe {font-size: 12.5px;color: var(--text-secondary);line-height: 1.5;}
+                /* 4. 交互控件区 */
+                .setting-action {display: flex;align-items: center;justify-content: flex-end;min-width: 100px;}
+                /* 5. 现代化 Switch 开关 (iOS 风格) */
+                .settings-switch {position: relative;display: inline-block;width: 44px;height: 24px;}
+                .settings-switch input {opacity: 0;width: 0;height: 0;}
+                .switch-slider {position: absolute;cursor: pointer;top: 0; left: 0; right: 0; bottom: 0;background-color: var(--border);transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 24px;}
+                .switch-slider:before {position: absolute;content: "";height: 18px;width: 18px;left: 3px;bottom: 3px;background-color: white;transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 50%;box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
+                .settings-switch input:checked + .switch-slider {background-color: var(--primary-color);}
+                .settings-switch input:focus + .switch-slider {box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);}
+                .settings-switch input:checked + .switch-slider:before {transform: translateX(20px);}
+                /* 6. 分段选择器 (Segmented Radio) */
+                .settings-radio-group {display: flex;background: #eef2f6;padding: 3px;border-radius: 10px;gap: 2px;}
+                .radio-tab {cursor: pointer;position: relative;}
+                .radio-tab input {position: absolute;opacity: 0;}
+                .radio-tab span {display: block;padding: 6px 14px;font-size: 12px;font-weight: 500;border-radius: 7px;color: var(--text-secondary);transition: all 0.2s;}
+                .radio-tab input:checked + span {background: white;color: var(--primary-color);box-shadow: var(--shadow-sm);}
+                /* 7. 输入框与下拉框 */
+                .settings-input, .settings-select {width: 100%;max-width: 180px;padding: 8px 12px;border: 1.5px solid var(--border);border-radius: var(--radius-sm);background: #ffffff !important;color: var(--text-primary);font-size: 13px;transition: var(--transition);}
+                .settings-input:focus, .settings-select:focus {border-color: var(--primary-color);outline: none;box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);}
+                /* 8. 底部状态反馈样式 */
+                .settings-status {flex: 1;font-size: 13px;display: flex;align-items: center;gap: 6px;}
+                .status-warning {color: var(--warning-color);background: rgba(245, 158, 11, 0.1);padding: 4px 10px;border-radius: 20px;}
+                .status-success {color: var(--secondary-color);animation: fadeIn 0.3s ease;}
+                /* 9. 底部按钮组微调 */
+                .modal-footer .button-group {display: flex;gap: 10px;}
+                .reset-default-btn {margin-right: auto; /* 将恢复默认按钮推向最左侧 */color: var(--text-secondary) !important;}
+                .reset-default-btn:hover {color: var(--danger-color) !important;border-color: var(--danger-color) !important;}/* 模态框布局固定 */
+                .settings-modal-box {width: 90%;max-width: 600px;max-height: 85vh; /* 限制最高高度 */display: flex;flex-direction: column; /* 纵向排列 Header, Content, Footer */}
+                /* 内容滚动区 */
+                .settings-scroll-area {flex: 1; /* 自动占据剩余高度 */overflow-y: auto; /* 关键：设置项过多时在此滚动 */padding: 24px;background: #ffffff;}
+                /* 只读行样式 */
+                .setting-row.readonly-row {background: #f1f5f9; /* 灰色背景 */opacity: 0.75;cursor: not-allowed;border: 1px dashed var(--border);}
+                .setting-row.readonly-row:hover {transform: none;box-shadow: none;}
+                .readonly-badge {background: var(--text-tertiary);color: white;font-size: 10px;padding: 2px 6px;border-radius: 4px;margin-left: 8px;vertical-align: middle;}
+                /* 禁用控件样式 */
+                .settings-switch.readonly, 
+                .settings-radio-group.readonly,
+                .settings-select:disabled,
+                .settings-input:read-only {pointer-events: none; /* 禁止点击 */filter: grayscale(1); /* 置灰 */}
+                /* Footer 固定在底部 */
+                .modal-footer {flex-shrink: 0;background: white;z-index: 10;}
                 `;
                 document.head.appendChild(style);
             }
@@ -1448,23 +2286,225 @@
             }, duration);
         }
 
+        // ------------------------------ 设置页 ----------------------------------
+        /**
+         * 显示系统设置模态框
+         */
+        showSettingsModal() {
+            // this.insertStyle();
+
+            // 1. 防止重复打开
+            const existingModal = document.getElementById('settings-modal');
+            if (existingModal) existingModal.remove();
+
+            // 2. 数据副本隔离：深拷贝原始设置
+            const editingSettings = JSON.parse(JSON.stringify(this.settings));
+            let settingsChanged = false;
+
+            // 3. 生成设置项 HTML
+            let settingsHtml = '';
+            editingSettings.forEach((setting) => {
+                const id = `setting-${setting.key}`;
+                let controlHtml = '';
+                // 判定是否只读
+                const isReadonly = setting.readonly === true;
+
+                switch (setting.type) {
+                    case 'checkbox':
+                        controlHtml = `
+                    <label class="settings-switch ${isReadonly ? 'readonly' : ''}">
+                        <input type="checkbox" id="${id}" ${setting.value ? 'checked' : ''} 
+                                class="settings-control-input" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
+                        <span class="switch-slider"></span>
+                    </label>`;
+                        break;
+                    case 'select':
+                        controlHtml = `
+                    <select id="${id}" class="settings-select" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
+                        ${setting.options.map(opt => `<option value="${opt.value}" ${opt.value === setting.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
+                    </select>`;
+                        break;
+                    case 'radio':
+                        controlHtml = `
+                    <div class="settings-radio-group ${isReadonly ? 'readonly' : ''}" data-key="${setting.key}">
+                        ${setting.options.map(opt => `
+                            <label class="radio-tab">
+                                <input type="radio" name="${setting.key}" value="${opt.value}" 
+                                    ${opt.value === setting.value ? 'checked' : ''} 
+                                    class="settings-control-input" ${isReadonly ? 'disabled' : ''}>
+                                <span>${opt.label}</span>
+                            </label>
+                        `).join('')}
+                    </div>`;
+                        break;
+                    default:
+                        controlHtml = `<input type="${setting.type || 'text'}" id="${id}" value="${setting.value}" 
+                                    class="settings-input" data-key="${setting.key}" ${isReadonly ? 'readonly' : ''}>`;
+                }
+
+                settingsHtml += `
+                    <div class="setting-row ${isReadonly ? 'readonly-row' : ''}">
+                        <div class="setting-info">
+                            <div class="setting-label-text">${setting.label}</div>
+                            <div class="setting-describe">${setting.describe || setting.description || ''}</div>
+                        </div>
+                        <div class="setting-action">${controlHtml}</div>
+                    </div>`;
+            });
+
+            // 4. 构建模态框结构 (关键：固定头部底部，中间滚动)
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.id = 'settings-modal';
+            modalOverlay.innerHTML = `
+            <div class="modal settings-modal-box">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                        系统设置
+                    </div>
+                    <button class="modal-close" id="close-modal-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
+                <div class="modal-content settings-scroll-area">
+                    <div class="settings-container">${settingsHtml}</div>
+                </div>
+                <div class="modal-footer">
+                    <div id="settings-status-bar" class="settings-status"></div>
+                    <div class="button-group">
+                        <button class="btn btn-outline reset-default-btn" id="reset-btn">恢复默认</button>
+                        <button class="btn btn-outline" id="cancel-btn">取消</button>
+                        <button class="btn btn-primary" id="save-btn">保存设置</button>
+                    </div>
+                </div>
+            </div>`;
+
+            document.body.appendChild(modalOverlay);
+
+            // --- 内部逻辑函数 ---
+
+            const setStatus = (msg, type = 'info') => {
+                const statusEl = document.getElementById('settings-status-bar');
+                if (statusEl) statusEl.innerHTML = `<span class="status-${type}">${msg}</span>`;
+            };
+
+            const closeSettings = (needConfirm = true) => {
+                if (settingsChanged && needConfirm) {
+                    this.showAlertModal('warning', '未保存', '确定放弃当前修改并离开吗？', {
+                        confirmText: '放弃', showCancel: true, cancelText: '返回',
+                        onConfirm: () => modalOverlay.remove()
+                    });
+                } else {
+                    modalOverlay.remove();
+                }
+            };
+
+            const saveSettings = () => {
+                if (!settingsChanged) return closeSettings(false);
+                try {
+                    editingSettings.forEach(edited => {
+                        const original = this.settings.find(s => s.key === edited.key);
+                        if (original && !original.readonly) {
+                            // 检查seedFilePath
+                            if (edited.key === 'seedFilePathId') {
+                                if (edited.value) {
+                                    const pathLenth = edited.value.toString().length;
+                                    if (pathLenth === 1 || pathLenth === 8) {
+                                        this.seedFilePathId = edited.value;
+                                        original.value = edited.value; // 更新内存
+                                    } else {
+                                        this.showAlertModal('error', '种子文件路径错误', "跳过设置路径ID");
+                                    }
+                                }
+                            } else {
+                                original.value = edited.value; // 更新内存
+                            }
+                            if (typeof GlobalConfig !== 'undefined' && GlobalConfig.hasOwnProperty(edited.key)) {
+                                GlobalConfig[edited.key] = edited.value; // 更新业务配置
+                            }
+                            this.saveSettings(); // 持久化
+                        }
+                    });
+                    this.showToast('设置保存成功', 'success', 2000);
+                    closeSettings(false);
+                } catch (e) {
+                    this.showToast('持久化失败: ' + e.message, 'error');
+                }
+            };
+
+            // --- 事件绑定 ---
+
+            modalOverlay.addEventListener('change', (e) => {
+                const target = e.target;
+                const key = target.dataset.key || target.name;
+                if (!key) return;
+
+                const setting = editingSettings.find(s => s.key === key);
+                // 【核心拦截】如果副本标志位或原始项是 readonly，直接不响应
+                if (!setting || setting.readonly) return;
+
+                if (target.type === 'checkbox') setting.value = target.checked;
+                else if (target.type === 'radio') setting.value = target.value;
+                else if (target.type === 'number') setting.value = parseFloat(target.value);
+                else setting.value = target.value;
+
+                settingsChanged = true;
+                setStatus('设置已修改，请保存', 'warning');
+            });
+
+            modalOverlay.querySelector('#save-btn').onclick = saveSettings;
+            modalOverlay.querySelector('#cancel-btn').onclick = () => closeSettings(true);
+            modalOverlay.querySelector('#close-modal-btn').onclick = () => closeSettings(true);
+            modalOverlay.querySelector('#reset-btn').onclick = () => {
+                this.showAlertModal('error', '重置所有设置？', '该操作将清除 GM 存储并刷新页面恢复默认配置！', {
+                    confirmText: '立即重置', showCancel: true,
+                    onConfirm: () => {
+                        editingSettings.forEach(s => GM_deleteValue(s.key));
+                        location.reload();
+                    }
+                });
+            };
+
+            // 遮罩点击及键盘支持
+            modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeSettings(true); };
+            const handleKey = (e) => {
+                if (e.key === 'Escape') closeSettings(true);
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveSettings();
+            };
+            document.addEventListener('keydown', handleKey);
+            const originalRemove = modalOverlay.remove;
+            modalOverlay.remove = function () {
+                document.removeEventListener('keydown', handleKey);
+                originalRemove.call(this);
+            };
+        }
+
+        showFirstTimeGuide() {
+            this.showAlertModal('info', '欢迎使用123FastLink',
+                `如果您是第一次使用本脚本，建议先阅读使用说明文档，了解基本功能和操作方法。
+                \n
+                ✅️ 如果要使用二级秒传链接，
+                建议先在设置中设置种子文件路径`);
+        }
+
         /**
          * 显示复制弹窗
          */
-        showCopyModal(defaultText = "") {
+        showCopyModal(defaultText = "", allFilePath = [], title = "秒传链接") {
             const fileListHtml = Array.isArray(this.shareLinkManager.fileInfoList) &&
-                this.shareLinkManager.fileInfoList.length > 0 ? `
-            <div class="file-list-container">
-                <div class="file-list-header">
-                    <div class="file-count">文件列表（共${this.shareLinkManager.fileInfoList.length}个）</div>
+                allFilePath.length > 0 ? `
+                <div class="file-list-container">
+                    <div class="file-list-header">
+                        <div class="file-count">文件列表（共${allFilePath.length}个）</div>
+                    </div>
+                    <div class="file-list">
+                        ${allFilePath.map(f => `
+                            <div class="file-item">${f}</div>
+                        `).join('')}
+                    </div>
                 </div>
-                <div class="file-list">
-                    ${this.shareLinkManager.fileInfoList.map(f => `
-                        <div class="file-item">${f.path}</div>
-                    `).join('')}
-                </div>
-            </div>
-        ` : '';
+            ` : '';
 
             const modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
@@ -1476,7 +2516,7 @@
                             <polyline points="16 18 22 12 16 6"></polyline>
                             <polyline points="8 6 2 12 8 18"></polyline>
                         </svg>
-                        秒传链接
+                        ${title}
                     </div>
                     <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1542,19 +2582,19 @@
             // 主复制按钮事件
             modalOverlay.querySelector('.dropdown-toggle').addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.copyContent('text');
+                this.copyContent('default');
             });
 
-            // 导出JSON按钮事件
+            // 导出按钮事件
             modalOverlay.querySelector('#exportJsonButton').addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.exportJson();
             });
 
             // 点击遮罩关闭
-            modalOverlay.addEventListener('click', (e) => {
-                if (e.target === modalOverlay) modalOverlay.remove();
-            });
+            // modalOverlay.addEventListener('click', (e) => {
+            //     if (e.target === modalOverlay) modalOverlay.remove();
+            // });
 
             document.body.appendChild(modalOverlay);
 
@@ -1576,18 +2616,27 @@
 
             let contentToCopy = inputField.value;
 
-            if (type === 'json') {
-                try {
-                    const jsonData = this.shareLinkManager.shareLinkToJson(contentToCopy);
-                    contentToCopy = JSON.stringify(jsonData, null, 2);
-                } catch (error) {
-                    this.showToast('转换JSON失败: ' + error.message, 'error');
+            if (type !== 'default') {
+                let contentType = this.shareLinkManager.linkChecker(contentToCopy);
+                if (!contentType[0]) {
+                    this.showToast('无效的秒传链接，无法复制', 'error');
                     return;
+                }
+
+                if (type === 'json') {
+                    if (contentType[2] === 'text') {
+                        const contentToCopyInfo = this.shareLinkManager.shareLinkToJson(contentToCopy)[2];
+                        contentToCopy = JSON.stringify(contentToCopyInfo, null, 2);
+                    }
+                } else if (type === 'text') {
+                    if (contentType[2] === 'json') {
+                        contentToCopy = this.shareLinkManager.jsonToTextShareLink(contentToCopy)[2];
+                    }
                 }
             }
 
             navigator.clipboard.writeText(contentToCopy).then(() => {
-                this.showToast(`已成功复制${type === 'json' ? 'JSON' : '纯文本'}到剪贴板 📋`, 'success');
+                this.showToast(`已成功复制到剪贴板 📋`, 'success');
             }).catch(err => {
                 this.showToast(`复制失败: ${err.message || '请手动复制内容'}`, 'error');
             });
@@ -1608,9 +2657,9 @@
             }
 
             try {
-                const jsonData = this.shareLinkManager.shareLinkToJson(shareLink);
+                const jsonData = this.shareLinkManager.shareLinkToJson(shareLink)[2];
                 const jsonContent = JSON.stringify(jsonData, null, 2);
-                const filename = this.getExportFilename(shareLink);
+                const filename = this.shareLinkManager.getExportFilename(shareLink) + '.json';
 
                 this.downloadJsonFile(jsonContent, filename);
                 this.showToast('JSON文件导出成功 📁', 'success');
@@ -1630,24 +2679,6 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-        }
-
-        // 获取文件名用于JSON导出
-        getExportFilename(shareLink) {
-            if (this.shareLinkManager.commonPath) {
-                const commonPath = this.shareLinkManager.commonPath.replace(/\/$/, ''); // 去除末尾斜杠
-                return `${commonPath}.json`;
-            }
-            const lines = shareLink.trim().split('\n').filter(Boolean);
-            if (lines.length === 0) return 'export.json';
-            const firstLine = lines[0];
-            const parts = firstLine.split('#');
-            if (parts.length >= 3) {
-                const fileName = parts[2];
-                const baseName = fileName.split('/').pop().split('.')[0] || 'export';
-                return `${baseName}.json`;
-            }
-            return 'export.json';
         }
 
         /**
@@ -1784,7 +2815,7 @@
                                     </div>
                                 </div>
                                 <button class="task-remove" data-task-id="${task.id}" 
-                                    ${isCurrentTask ? 'disabled' : ''}>
+                                    ${/*isCurrentTask ? 'disabled' : ''*/ ""}>
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <line x1="18" y1="6" x2="6" y2="18"></line>
                                         <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -1922,32 +2953,35 @@
          * 包括UI进度条显示和轮询
          * @param {*} fileSelectInfo - 选中文件信息，来自selector
          */
-        async launchProgressModal(fileSelectInfo) {
-            // 轮询进度
-            const mgr = this.shareLinkManager;
-            // this.showProgressModal("生成秒传链接", 0, "准备中...");
-            mgr.progress = 0;
-            const poll = setInterval(() => {
-                this.updateProgressModal("生成秒传链接", mgr.progress, mgr.progressDesc, this.taskList.length);
-                if (mgr.progress > 100) {
-                    clearInterval(poll);
-                    setTimeout(() => this.hideProgressModal(), 500);
-                }
-            }, 500);
-
-            const shareLink = await mgr.generateShareLink(fileSelectInfo);
-
+        async launchGenerateModal(fileSelectInfo, secondary = false) {
+            const poll = this.startRollPolling("生成秒传链接");
+            let shareLinkResult;
+            if (secondary) {
+                shareLinkResult = await this.shareLinkManager.generateSecondaryShareLink(fileSelectInfo, null, this.seedFilePathId);
+            } else {
+                shareLinkResult = await this.shareLinkManager.generateShareLink(fileSelectInfo);
+            }
+            if (!shareLinkResult[0]) {
+                this.showToast(shareLinkResult[1] || "秒传链接生成失败", 'error');
+                this.showAlertModal("error", "秒传链接生成失败", shareLinkResult[1] || "未知错误");
+                this.stopRollPolling(poll);
+                return null;
+            }
+            const shareLink = shareLinkResult[2];
             // 清除任务取消标志
             this.shareLinkManager.taskCancel = false;
-
             if (!shareLink) {
                 this.showToast("没有选择文件", 'warning');
-                clearInterval(poll);
+                this.stopRollPolling(poll);
                 return;
             }
-            clearInterval(poll);
-            this.hideProgressModal();
-            this.showCopyModal(shareLink);
+            this.stopRollPolling(poll);
+            this.showCopyModal(shareLink, shareLinkResult[3] || [], secondary ? "二级链接" : "秒传链接");
+            return shareLink;
+        }
+
+        async launchSecondaryGenerateModal(fileSelectInfo) {
+            return this.launchGenerateModal(fileSelectInfo, true);
         }
 
         /**
@@ -2057,8 +3091,8 @@
                         if (action === 'retry') {
                             this.addAndRunTask('retry', { fileList: result.failed });
                         } else if (action === 'export') {
-                            const shareLink = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '');
-                            this.showCopyModal(shareLink);
+                            const shareLinkResult = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '');
+                            this.showCopyModal(shareLinkResult[2], shareLinkResult[3] || [], "导出失败链接");
                         }
                     });
                 });
@@ -2114,6 +3148,26 @@
                     color: 'var(--danger-color)',
                     bgColor: 'rgba(239, 68, 68, 0.1)',
                     borderColor: 'rgba(239, 68, 68, 0.2)'
+                },
+                warning: {
+                    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>`,
+                    color: 'var(--warning-color)',
+                    bgColor: 'rgba(245, 158, 11, 0.1)',
+                    borderColor: 'rgba(245, 158, 11, 0.2)'
+                },
+                info: {
+                    icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    </svg>`,
+                    color: 'var(--info-color)',
+                    bgColor: 'rgba(59, 130, 246, 0.1)',
+                    borderColor: 'rgba(59, 130, 246, 0.2)'
                 }
             };
 
@@ -2235,21 +3289,32 @@
             }, 100);
         }
 
+        /*
+            * 启动轮询刷新进度框
+        */
+        startRollPolling(title) {
+            this.updateProgressModal(title, 0, "准备中...");
+            this.shareLinkManager.progress = 0;
+            return setInterval(() => {
+                this.updateProgressModal(title, this.shareLinkManager.progress, this.shareLinkManager.progressDesc, this.taskList.length);
+            }, 100);
+        }
+
+        /**
+         *  停止轮询更新进度
+         * @param {} poll 
+         */
+        stopRollPolling(poll) {
+            clearInterval(poll);
+            this.hideProgressModal();
+        }
+
         /**
          * 任务函数 - 启动从输入的内容解析并保存秒传链接，UI层面的保存入口，retry为是可以重试失败的文件
          * @param {*} content - 输入内容（秒传链接/JSON）
          */
         async launchSaveLink(content, retry = false) {
-            //  轮询进度
-            this.updateProgressModal("保存秒传链接", 0, "准备中...");
-            this.shareLinkManager.progress = 0;
-            const poll = setInterval(() => {
-                this.updateProgressModal("保存秒传链接", this.shareLinkManager.progress, this.shareLinkManager.progressDesc, this.taskList.length);
-                // 正常情况下不主动清除
-                if (this.shareLinkManager.progress > 100) {
-                    clearInterval(poll);
-                }
-            }, 100);
+            const poll = this.startRollPolling("保存秒传链接");
             let saveResult;
             if (!retry) {
                 saveResult = await this.shareLinkManager.saveShareLink(content);
@@ -2258,12 +3323,26 @@
             }
             // 清除任务取消标志
             this.shareLinkManager.taskCancel = false;
-
-            clearInterval(poll);
-            this.hideProgressModal();
-            this.showSaveResultsModal(saveResult);
+            this.stopRollPolling(poll);
+            this.showSaveResultsModal(saveResult[2]);
             this.renewWebPageList();
-            this.showToast(saveResult ? "保存成功" : "保存失败", saveResult ? 'success' : 'error');
+            this.showToast(saveResult[0] ? "保存成功" : "保存失败", saveResult[0] ? 'success' : 'error');
+        }
+
+        async launchSaveSecondaryLink(content) {
+            const poll = this.startRollPolling("保存秒传链接");
+            let saveResult = await this.shareLinkManager.saveSecondaryShareLink(content, this.seedFilePathId);
+            this.shareLinkManager.taskCancel = false;
+            this.stopRollPolling(poll);
+            if (!saveResult[0]) {
+                this.showToast("保存失败 " + saveResult[1], 'error');
+                this.showAlertModal('error', '保存失败', saveResult[1]);
+                return;
+            }
+            this.showSaveResultsModal(saveResult[2]);
+            this.renewWebPageList();
+            this.showToast(saveResult[0] ? "保存成功" : "保存失败", saveResult[0] ? 'success' : 'error');
+
         }
 
         /**
@@ -2272,25 +3351,66 @@
          * @param {string} fileName 
          */
         async launchSaveLinkOnlyText(linkText, fileName) {
-            // 轮询进度
-            this.updateProgressModal("保存秒传链接", 0, "准备中...");
-            this.shareLinkManager.progress = 0;
-            const poll = setInterval(() => {
-                this.updateProgressModal("保存秒传链接", this.shareLinkManager.progress, this.shareLinkManager.progressDesc, this.taskList.length);
-                // 正常情况下不主动清除
-                if (this.shareLinkManager.progress > 100) {
-                    clearInterval(poll);
-                }
-            }
-                , 100);;
+            const poll = this.startRollPolling("保存秒传链接");
             const saveResult = await this.shareLinkManager.saveShareLinkOnlyText(linkText, fileName);
-            clearInterval(poll);
-            this.hideProgressModal();
+            this.stopRollPolling(poll);
             this.showAlertModal(saveResult[0] ? 'success' : 'error',
                 saveResult[0] ? '保存成功' : '保存失败',
                 saveResult[1]);
             this.renewWebPageList();
             this.showToast(saveResult ? "保存成功" : "保存失败", saveResult ? 'success' : 'error');
+        }
+
+
+        /**
+         * 任务函数 - 启动转换秒传链接格式，UI层面的转换入口
+         * @param {string} content - 输入内容（秒传链接/JSON）
+         */
+        async launchConvert(content) {
+            // 可以利用现有的复制模态框显示结果，要先转换成文本链接
+            // if (this.shareLinkManager.)
+            const textType = this.shareLinkManager.linkChecker(content);
+            let shareLink;
+            if (!textType[0]) {
+                this.showAlertModal('error', '格式错误', '无法识别的秒传链接格式。');
+                return;
+            }
+            if (textType[2] === 'json') {
+                shareLink = this.shareLinkManager.jsonToTextShareLink(content)[2];
+            } else if (textType[2] === 'text') {
+                const shareLinkDict = this.shareLinkManager.shareLinkToJson(content)[2];
+                shareLink = JSON.stringify(shareLinkDict, null, 2);
+            }
+            this.showCopyModal(shareLink, []);
+        }
+
+        async launchSaveFromFile(fileSelectInfo) {
+            const selectedRowKeys = fileSelectInfo.selectedRowKeys;
+            if (!selectedRowKeys || selectedRowKeys.length === 0) {
+                this.showToast("没有选择文件", 'warning');
+                return;
+            }
+            if (selectedRowKeys.length > 1) {
+                this.showToast("暂时只能选择单个文件", 'warning');
+                return;
+            }
+            const file = selectedRowKeys[0];
+            // 先展开对话框
+            this.updateProgressModal("读取文件中...", 0, "请稍候...");
+            const fileContentRes = await this.shareLinkManager.getFileContentAsText(file);
+            if (!fileContentRes[0]) {
+                this.showToast("读取文件失败", 'error');
+                return;
+            }
+            const content = fileContentRes[2];
+            // 校验格式
+            const textType = this.shareLinkManager.linkChecker(content);
+            if (!textType[0]) {
+                this.showAlertModal('error', '格式错误', '无法识别的秒传链接格式。');
+                return;
+            }
+            // 启动保存
+            this.launchSaveLink(content);
         }
 
         /**
@@ -2301,7 +3421,7 @@
             const renewButton = document.querySelector('.layout-operate-icon.mfy-tooltip svg');
             if (renewButton) {
                 const clickEvent = new MouseEvent('click', {
-                    bubbles: true, cancelable: true, view: window
+                    bubbles: true, cancelable: true
                 });
                 renewButton.dispatchEvent(clickEvent);
             }
@@ -2310,7 +3430,7 @@
         /**
          * 显示输入模态框
          */
-        async showInputModal() {
+        async showInputModal(saveTask = 'save', canOnlyLink = true, buttonText = '保存') {
             const modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
             modalOverlay.innerHTML = `
@@ -2337,32 +3457,32 @@
                     <textarea id="saveText" placeholder="请输入或粘贴秒传链接，或将JSON文件拖拽到此处..."></textarea>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-primary" id="saveButton">
+                    <button class="btn btn-secondary" id="saveButton">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                             <polyline points="17 21 17 13 7 13 7 21"></polyline>
                             <polyline points="7 3 7 8 15 8"></polyline>
                         </svg>
-                        保存
+                    ${buttonText}
                     </button>
-
+                    ${canOnlyLink ? `
                     <button class="btn btn-primary" id="saveButtonOnlyLink">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                            <polyline points="7 3 7 8 15 8"></polyline>
                         </svg>
                         仅保存链接
                     </button>
-
+                    ` : ''}
                     <button class="btn btn-outline" id="selectFileButton">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                             <polyline points="13 2 13 9 20 9"></polyline>
                         </svg>
-                        选择JSON
+                        选择文件
                     </button>
-                    <input type="file" class="file-input" id="jsonFileInput" accept=".json">
+                    <input type="file" class="file-input" id="jsonFileInput" accept=".">
                 </div>
             </div>
             `;
@@ -2384,23 +3504,27 @@
                     return;
                 }
                 modalOverlay.remove();
-                this.addAndRunTask('save', { content });
+                this.addAndRunTask(saveTask, { content });
             });
 
-            // 仅保存链接按钮事件绑定
-            modalOverlay.querySelector('#saveButtonOnlyLink').addEventListener('click', async () => {
-                const content = textarea.value.trim();
-                if (!content) {
-                    this.showToast("请输入秒传链接或导入JSON文件", 'warning');
-                    return;
-                }
-                modalOverlay.remove();
-                this.addAndRunTask('saveOnlyLink', { content });
-            });
+            if (canOnlyLink) {
+                // 仅保存链接按钮事件绑定
+                modalOverlay.querySelector('#saveButtonOnlyLink').addEventListener('click', async () => {
+                    const content = textarea.value.trim();
+                    if (!content) {
+                        this.showToast("请输入秒传链接或导入JSON文件", 'warning');
+                        return;
+                    }
+                    modalOverlay.remove();
+                    this.addAndRunTask('saveOnlyLink', { content });
+                });
+            }
+
 
             modalOverlay.addEventListener('click', (e) => {
                 if (e.target === modalOverlay) modalOverlay.remove();
             });
+
 
             document.body.appendChild(modalOverlay);
 
@@ -2442,33 +3566,31 @@
         }
 
         /**
-         * 读取JSON文件并将内容填充到文本区域
+         * 读取文件并将内容填充到文本区域
          * @param {*} file - 要读取的文件
          * @param {*} textarea - 目标文本区域
          * @returns
          */
         readJsonFile(file, textarea) {
-            if (!file.name.toLowerCase().endsWith('.json')) {
-                this.showToast('请选择JSON文件', 'warning');
+            // 不再限制文件类型
+
+            // if (!file.name.toLowerCase().endsWith('.json')) {
+            //     this.showToast('请选择JSON文件', 'warning');
+            //     return;
+            // }
+
+            // 限制文件大小
+            if (file.size > this.maxTextFileSize) {
+                this.showToast(`文件过大，最大支持 ${this.maxTextFileSize / (1024 * 1024)} MB，请检查是否选错文件`, 'error');
+                this.showAlertModal('error', '文件过大', `所选文件大小为 ${(file.size / (1024 * 1024)).toFixed(2)} MB，超过最大支持 ${(this.maxTextFileSize / (1024 * 1024))} MB。请检查是否选错文件。
+                如果需要导入更大文件，请修改允许的最大值`);
                 return;
             }
 
             const reader = new FileReader();
             reader.onload = (e) => {
-                try {
-                    const jsonContent = e.target.result;
-                    const jsonData = JSON.parse(jsonContent);
-
-                    if (this.shareLinkManager.validateJson(jsonData)) {
-                        // const shareLink = this.shareLinkManager.jsonToShareLink(jsonData);
-                        textarea.value = jsonContent;
-                        this.showToast('JSON文件导入成功 ✅', 'success');
-                    } else {
-                        this.showToast('无效的JSON格式', 'error');
-                    }
-                } catch (error) {
-                    this.showToast('JSON文件解析失败: ' + error.message, 'error');
-                }
+                textarea.value = e.target.result;
+                this.showToast('文件导入成功 ✅', 'success');
             };
             reader.readAsText(file);
         }
@@ -2484,7 +3606,10 @@
             // 任务处理函数映射
             const taskHandlerMap = {
                 'generate': async (task) => {
-                    await this.launchProgressModal(task.params.fileSelectInfo);
+                    await this.launchGenerateModal(task.params.fileSelectInfo);
+                },
+                'generateSecondary': async (task) => {
+                    await this.launchSecondaryGenerateModal(task.params.fileSelectInfo);
                 },
                 'save': async (task) => {
                     await this.launchSaveLink(task.params.content);
@@ -2494,6 +3619,15 @@
                 },
                 'saveOnlyLink': async (task) => {
                     await this.launchSaveLinkOnlyText(task.params.content, task.params.fileName || '123FastLink.123share');
+                },
+                'saveSecondary': async (task) => {
+                    await this.launchSaveSecondaryLink(task.params.content);
+                },
+                'convert': async (task) => {
+                    await this.launchConvert(task.params.content);
+                },
+                'saveFromFile': async (task) => {
+                    await this.launchSaveFromFile(task.params.fileSelectInfo);
                 }
             };
 
@@ -2509,7 +3643,13 @@
                 this.isTaskRunning = true;
 
                 if (taskHandlerMap[task.type]) {
-                    await taskHandlerMap[task.type](task);
+                    try {
+                        await taskHandlerMap[task.type](task);
+                    } catch (error) {
+                        console.error(`任务${task.id}执行失败:`, error);
+                        this.showAlertModal('error', '任务执行失败', `任务${task.id}执行过程中出现错误: ${error.message}`);
+                        this.showToast(`任务${task.id}执行失败: ${error.message}`, 'error');
+                    }
                 } else {
                     this.showToast(`未知的任务类型: ${task.type}`, 'error');
                 }
@@ -2529,20 +3669,25 @@
          */
         addAndRunTask(taskType, params = {}) {
             const taskId = ++this.taskIdCounter;
-            // const taskList = {
-            //     'generate': '生成秒传链接',
-            //     'save': '保存秒传链接',
-            //     'retry': '重试失败链接保存',
-            //     'saveOnlyLink': '保存秒传链接（仅链接）'
-            // }
+            let fileSelectInfo = null;
             switch (taskType) {
                 case 'generate':
-                    const fileSelectInfo = this.selector.getSelection();
+                    // 先获取选中文件信息，防止任务执行时选择变更
+                    fileSelectInfo = this.selector.getSelection();
                     if (!fileSelectInfo || fileSelectInfo.length === 0) {
                         this.showToast("请先选择文件", 'warning');
                         return;
                     }
                     this.taskList.push({ id: taskId, type: 'generate', params: { fileSelectInfo } });
+                    break;
+                case 'generateSecondary':
+                    // 先获取选中文件信息，防止任务执行时选择变更
+                    fileSelectInfo = this.selector.getSelection();
+                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                        this.showToast("请先选择文件", 'warning');
+                        return;
+                    }
+                    this.taskList.push({ id: taskId, type: 'generateSecondary', params: { fileSelectInfo } });
                     break;
 
                 case 'save':
@@ -2555,6 +3700,20 @@
 
                 case 'saveOnlyLink':
                     this.taskList.push({ id: taskId, type: 'saveOnlyLink', params: { content: params.content } });
+                    break;
+                case 'saveSecondary':
+                    this.taskList.push({ id: taskId, type: 'saveSecondary', params: { content: params.content } });
+                    break;
+                case 'convert':
+                    this.taskList.push({ id: taskId, type: 'convert', params: { content: params.content } });
+                    break;
+                case 'saveFromFile':
+                    fileSelectInfo = this.selector.getSelection();
+                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                        this.showToast("请先选择文件", 'warning');
+                        return;
+                    }
+                    this.taskList.push({ id: taskId, type: 'saveFromFile', params: { fileSelectInfo } });
                     break;
                 default:
                     // 未知的 taskType
@@ -2578,9 +3737,9 @@
             const buttonExist = document.querySelector('.mfy-button-container');
             if (buttonExist) return;
 
-            const isFilePage = window.location.pathname === "/" &&
-                (window.location.search === "" || window.location.search.includes("homeFilePath"));
-            if (!isFilePage) return;
+            // const isFilePage = window.location.pathname === "/" &&
+            //     (window.location.search === "" || window.location.search.includes("homeFilePath"));
+            // if (!isFilePage) return;
 
             const container = document.querySelector('.home-operator-button-group');
             if (!container) return;
@@ -2634,15 +3793,75 @@
 
     }
 
+    class logger {
+        constructor(console) {
+            this.console = console;
+            this.debugMode = GlobalConfig.DEBUGMODE;
+        }
+        log(...args) {
+            // 非调试模式不输出
+            if (!GlobalConfig.DEBUGMODE) return;
+            this.console.log(...args);
+        }
+        error(...args) {
+            this.console.error(...args);
+        }
+        warn(...args) {
+            this.console.warn(...args);
+        }
+        info(...args) {
+            this.console.info(...args);
+        }
+    }
+
+    /**
+     * 初始化设置，从 GM 存储中加载
+     */
+    function initSettings() {
+        const Settings = GM_getValue('fastlink_settings', null);
+
+        if (Settings) {
+            try {
+                GlobalConfig = {
+                    ...GlobalConfig,
+                    ...Settings
+                };
+            } catch (e) {
+                console.error("加载设置失败:", e);
+                // 失败则重置设置
+                saveSettings({});
+            }
+        }
+    }
+    function saveSettings(settings) {
+        // 应用到GlobalConfig
+        GlobalConfig = {
+            ...GlobalConfig,
+            ...settings
+        };
+        GM_setValue('fastlink_settings', settings);
+    }
+
+    function isFirstTime() {
+        const firstTime = GM_getValue('fastlink_first_time', true);
+        if (firstTime) {
+            GM_setValue('fastlink_first_time', false);
+        }
+        return firstTime;
+    }
+
+    initSettings();
+    // 创建 logger 实例, 并覆盖全局 console
+    var console = new logger(window.console);
     const apiClient = new PanApiClient();
     const selector = new TableRowSelector();
     const shareLinkManager = new ShareLinkManager(apiClient);
-    const uiManager = new UiManager(shareLinkManager, selector);
+    const uiManager = new UiManager(shareLinkManager, selector, isFirstTime());
 
     selector.init();
     uiManager.init();
 
-    if (DEBUG) {
+    if (GlobalConfig.DEBUGMODE) {
         window._apiClient = apiClient;
         window._shareLinkManager = shareLinkManager;
         window._selector = selector;
