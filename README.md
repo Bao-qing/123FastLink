@@ -76,8 +76,8 @@ Tampermonkey 是一个用户脚本管理器，123FastLink 需要它才能运行�
 
 ### 第二步：安装 123FastLink 脚本
 
-**方法一：从 GreasyFork 安装（推荐）**
-1. 访问 [123FastLink - GreasyFork](https://greasyfork.org/zh-CN/scripts/525210-123fastlink)
+**方法一：从 GreasyFork 或 ScriptCat 安装（推荐）**
+1. 访问 [123FastLink - GreasyFork](https://greasyfork.org/zh-CN/scripts/525210-123fastlink) 或 [123FastLink - ScriptCat](https://scriptcat.org/zh-CN/script-show-page/5041)
 2. 点击 **"安装此脚本"** 按钮
 3. 在 Tampermonkey 窗口中点击 **"安装"** 确认
 
@@ -327,7 +327,7 @@ Tampermonkey 是一个用户脚本管理器，123FastLink 需要它才能运行�
 - 在脚本菜单中点击 **"检查更新"**
 
 **手动更新：**
-1. 访问 [GreasyFork](https://greasyfork.org/zh-CN/scripts/525210-123fastlink)
+1. 访问脚本安装页
 2. 点击 **"重新安装此脚本"**
 3. 在 Tampermonkey 中确认安装
 
