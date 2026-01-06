@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.01.1
+// @version      2026.1.06.1
 // @description  123云盘秒传链接脚本
 // @author       Baoqing
 // @author       Chaofan
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     var GlobalConfig = {
-        scriptVersion: "3.1.1",                     // 脚本版本
+        scriptVersion: "3.1.2",                     // 脚本版本
         usesBase62EtagsInExport: true,              // 导出时使用Base62编码的etag
         getFileListPageDelay: 500,                  // 获取文件列表每页延时
         getFileInfoBatchSize: 100,                  // 批量获取文件信息的数量
@@ -31,7 +31,8 @@
         MAX_TEXT_FILE_SIZE: 3 * 1024 * 1024,        // 文本文件最大3MB
         DEFAULT_EXPORT_FILENAME: "123FastLink_Export", // 默认导出文件名
         DEBUGMODE: false,
-        seedFilePathId: null                        // 种子文件路径ID
+        seedFilePathId: null,                        // 种子文件路径ID
+        secondaryLinkUseJson: true                  // 二级秒传链接使用JSON格式
     };
 
     // 1. 123云盘API通信类
@@ -981,20 +982,6 @@
         }
 
         _bindSelectAllEvent(checkbox) {
-            // if (checkbox.dataset.selectAllBound) return;
-            // checkbox.dataset.selectAllBound = 'true';
-            // checkbox.addEventListener('change',  () => {
-            //     console.log('[123FASTLINK] [Selector] 全选框状态改变:', checkbox.checked);
-            //     if (checkbox.checked) {
-            //         this.isSelectAll = true;
-            //         this.unselectedRowKeys = [];
-            //         this.selectedRowKeys = [];
-            //     } else {
-            //         this.isSelectAll = false;
-            //         this.selectedRowKeys = [];
-            //         this.unselectedRowKeys = [];
-            //     }
-            // });
             this._onSelectAllChange(checkbox);
         }
 
@@ -1083,13 +1070,14 @@
             this.getFolderInfoDelay = GlobalConfig.getFolderInfoDelay;
             this.saveLinkDelay = GlobalConfig.saveLinkDelay;
             this.mkdirDelay = GlobalConfig.mkdirDelay;
-            this.fileInfoList = []; // TODO fileInfoList传递方式不合理
+            this.fileInfoList = []; // fileInfoList 在递归获取文件时使用的全局变量
             // this.scriptName = GlobalConfig.scriptName,
-            this.commonPath = "";
+            // this.commonPath = "";
             this.COMMON_PATH_LINK_PREFIX_V2 = GlobalConfig.COMMON_PATH_LINK_PREFIX_V2;
             this.usesBase62EtagsInExport = GlobalConfig.usesBase62EtagsInExport;
             this.scriptVersion = GlobalConfig.scriptVersion;
             this.defaultExportName = GlobalConfig.DEFAULT_EXPORT_FILENAME;
+            this.secondaryLinkUseJson = GlobalConfig.secondaryLinkUseJson;
         }
 
         /**
@@ -1173,14 +1161,13 @@
         }
 
         /**
-         * 获取this.fileInfoList的公共路径
-         * @returns this.commonPath / commonPath
+         * 获取fileInfoList的公共路径
+         * @returns commonPath
          */
-        async _getCommonPath() {
-            if (!this.fileInfoList || this.fileInfoList.length === 0) return '';
-
+        async _getCommonPath(fileInfoList) {
+            if (!fileInfoList || fileInfoList.length === 0) return '';
             // 提取所有路径并转换为目录组件数组
-            const pathArrays = this.fileInfoList.map(file => {
+            const pathArrays = fileInfoList.map(file => {
                 const path = file.path || '';
                 // 移除路径末尾的文件名（如果有）
                 const lastSlashIndex = path.lastIndexOf('/');
@@ -1204,21 +1191,19 @@
 
             // 将公共前缀组件组合为路径字符串
             const commonPath = commonPrefix.length > 0 ? commonPrefix.join('/') + '/' : '';
-            this.commonPath = commonPath;
+            // this.commonPath = commonPath;
             return commonPath;
         }
 
         /**
          * 获取所有选择的文件,进入文件夹
          * @param {*} fileSelectionDetails - 来自selector.getSelection()
-         * @returns  - 文件信息在this.fileInfoList里
-         * @returns  - this.commonPath-公共路径
-         * @returns  - boolean - 是否成功获取到文件
+         * @returns  - [boolean, 错误信息, 文件信息列表,commonPath]
          */
         async _getSelectedFilesInfo(fileSelectionDetails) {
             this.fileInfoList = [];
             if (!fileSelectionDetails.isSelectAll && fileSelectionDetails.selectedRowKeys.length === 0) {
-                return false;
+                return [false, "未选择文件", null];
             }
             let fileSelectFolderInfoList = [];
             if (fileSelectionDetails.isSelectAll) {
@@ -1242,7 +1227,7 @@
                 if (!fileSelectIdList.length) {
                     this.progress = 100;
                     this.progressDesc = "未选择文件";
-                    return false;
+                    return [false, "未选择文件", null];
                 }
                 // 获取文件信息
 
@@ -1264,14 +1249,15 @@
                 // 任务取消
                 if (this.taskCancel) {
                     this.progressDesc = "任务已取消";
-                    return true; // 已经获取的文件保留
+                    return [true, "任务已取消", this.fileInfoList];
+                    // 已经获取的文件保留
                 }
 
                 await this._getAllFileInfoByFolderId(folderInfo.fileId, folderInfo.fileName + "/", fileSelectFolderInfoList.length);
             }
             // 处理文件夹路径
             // 检查commonPath
-            const commonPath = await this._getCommonPath();
+            const commonPath = await this._getCommonPath(this.fileInfoList);
             // 去除文件夹路径中的公共路径
             if (commonPath) {
                 this.fileInfoList.forEach(info => {
@@ -1280,7 +1266,7 @@
                 });
             }
 
-            return true;
+            return [true, null, this.fileInfoList, commonPath];
         }
 
         /**
@@ -1288,37 +1274,40 @@
          * @param {*} fileSelectionDetails - 来自selector.getSelection()
          * @returns {Promise<string>} - 分享链接,如果未选择文件则返回空字符串
          */
-        async generateShareLink(fileSelectionDetails) {
+        async generateShareLink(fileSelectionDetails, jsonExport = false) {
             this.progress = 0;
             this.progressDesc = "准备获取文件信息...";
 
             // 获取选中的文件（文件夹）的详细信息
-            // this.fileInfoList, this.commonPath
-            const result = await this._getSelectedFilesInfo(fileSelectionDetails);
-            if (!result) return [false, "未选择文件", ""];
+            const [resultSuccess, resultError, fileInfoList, commonPath] = await this._getSelectedFilesInfo(fileSelectionDetails);
+            if (!resultSuccess) return [false, resultError, null];
             //// if (hasFolder) alert("文件夹暂时无法秒传，将被忽略");
             let allFilePath = [];
-            for (const fileInfo of this.fileInfoList) {
+            for (const fileInfo of fileInfoList) {
                 if (fileInfo.type !== 1) {
                     allFilePath.push(fileInfo.path);
                 }
             }
             this.progressDesc = "秒传链接生成完成";
-            return [...this.buildShareLink(this.fileInfoList, this.commonPath), allFilePath];
+            return [...this.buildShareLink(fileInfoList, commonPath, jsonExport), allFilePath];
         }
 
         /**
-         * 拼接链接
+         * 拼接链接 etag: 来自服务器md5，由函数转换格式 
          * @param {*} fileInfoList - {etag: string, size: number, path: string, fileName: string}
          */
-        buildShareLink(fileInfoList, commonPath) {
-            const shareLinkFileInfo = fileInfoList.map(info => {
-                //if (info.type === 0) {
-                return [this.usesBase62EtagsInExport ? this._hexToBase62(info.etag) : info.etag, info.size, info.path.replace(/[%#$]/g, '')].join('#');
-                //}
-            }).filter(Boolean).join('$');
-            const shareLink = `${this.COMMON_PATH_LINK_PREFIX_V2}${commonPath}%${shareLinkFileInfo}`;
-            return [true, null, shareLink];
+        buildShareLink(fileInfoList, commonPath, jsonExport = false) {
+            if (jsonExport) {
+                return this._buildJsonShareLink(fileInfoList, commonPath, this.usesBase62EtagsInExport);
+            } else {
+                const shareLinkFileInfo = fileInfoList.map(info => {
+                    //if (info.type === 0) {
+                    return [this.usesBase62EtagsInExport ? this._hexToBase62(info.etag) : info.etag, info.size, info.path.replace(/[%#$]/g, '')].join('#');
+                    //}
+                }).filter(Boolean).join('$');
+                const shareLink = `${this.COMMON_PATH_LINK_PREFIX_V2}${commonPath}%${shareLinkFileInfo}`;
+                return [true, null, shareLink];
+            }
         }
 
         _isValidEtag(etag) {
@@ -1333,7 +1322,7 @@
          * @param {*} shareLink     秒传链接
          * @param {*} InputUsesBase62  输入是否使用Base62
          * @param {*} outputUsesBase62 函数输出是否使用Base62，本脚本中使用hex传递，默认false
-         * @returns {Array} - {etag: string, size: number, path: string, fileName: string}
+         * @returns {Array} - [boolean, 错误信息, 文件信息列表 - [{etag: string, size: number, path: string, fileName: string}], 失败列表, commonPath]
          */
         _parseTextShareLink(shareLink, InputUsesBase62 = true, outputUsesBase62 = false) {
             // Why use Base62 ???
@@ -1360,7 +1349,7 @@
             }
 
             const shareLinkList = Array.from(shareFileInfo.replace(/\r?\n/g, '$').split('$'));
-            this.commonPath = commonPath;
+            // this.commonPath = commonPath;
             let failList = [];
             const fileList = shareLinkList.map(singleShareLink => {
                 const singleFileInfoList = singleShareLink.split('#');
@@ -1401,7 +1390,7 @@
             if (fileList.length === 0) {
                 return [false, '未解析到有效的文件信息', null, failList];
             }
-            return [true, null, fileList, failList];
+            return [true, null, fileList, failList, commonPath];
         }
 
         /**
@@ -1430,7 +1419,7 @@
          * @param {*} fileList - {etag: string, size: number, path: string, fileName: string}
          * @returns shareFileList - {etag: string, size: number, path: string, fileName: string, parentFolderId: number}
          */
-        async _makeDirForFiles(shareFileList) {
+        async _makeDirForFiles(shareFileList, commonPath) {
             const total = shareFileList.length;
             // 文件夹创建，并为shareFileList添加parentFolderId------------------------------------
             // 记录文件夹(path)
@@ -1438,8 +1427,8 @@
             let folder = {};
             // 如果存在commonPath，先创建文件夹
             const rootFolderId = await this.apiClient.getParentFileId();
-            if (this.commonPath) {
-                const commonPathParts = this.commonPath.split('/').filter(part => part !== '');
+            if (commonPath) {
+                const commonPathParts = commonPath.split('/').filter(part => part !== '');
                 let currentParentId = rootFolderId;
 
                 for (let i = 0; i < commonPathParts.length; i++) {
@@ -1463,7 +1452,7 @@
                 const itemPath = item.path.split('/').slice(0, -1);
 
                 // 记得去掉commonPath末尾的斜杠
-                let nowParentFolderId = folder[this.commonPath.slice(0, -1)] || rootFolderId;
+                let nowParentFolderId = folder[commonPath.slice(0, -1)] || rootFolderId;
                 for (let i = 0; i < itemPath.length; i++) {
                     const path = itemPath.slice(0, i + 1).join('/');
                     if (!folder[path]) {
@@ -1529,32 +1518,15 @@
                 completed++;
                 console.log('[123FASTLINK] [ShareLinkManager]', '已保存:', fileInfo.fileName);
                 this.progress = Math.round((completed / total) * 100);
-                this.progressDesc = `正在保存第 ${completed} / ${total} 个文件...`;
+                this.progressDesc = `(成功: ${success}，失败: ${failed})
+                正在保存第 ${completed} / ${total} 个文件(${fileInfo.fileName})...`;
             }
             // this.progress = 100;
             // this.progressDesc = "保存完成";
             return {
-                success: successList, failed: failedList, commonPath: this.commonPath
+                success: successList, failed: failedList
             };
         }
-
-        // /**
-        //  * 保存秒传链接
-        //  */
-        // async saveTextShareLink(shareLink) {
-        //     const shareFileList = this._parseTextShareLink(shareLink);
-        //     return this._saveFileList(await this._makeDirForFiles(shareFileList));
-        // }
-
-        // /**
-        //  * 保存JSON格式的秒传链接
-        //  * @param {string} jsonContent
-        //  * @returns {Promise<object>} - 保存结果
-        //  */
-        // async saveJsonShareLink(jsonContent) {
-        //     const shareFileList = this._parseJsonShareLink(jsonContent);
-        //     return this._saveFileList(await this._makeDirForFiles(shareFileList));
-        // }
 
         /**
          *  保存秒传链接（自动判断格式）
@@ -1564,28 +1536,15 @@
          */
         async saveShareLink(content) {
             let saveResult = { success: [], failed: [] };
-            // try {
-            //     // 尝试作为JSON解析
-            //     const jsonData = this.safeParse(content);
-            //     if (jsonData) {
-            //         saveResult = await this.saveJsonShareLink(jsonData);
-            //     } else {
-            //         // 作为普通秒传链接处理
-            //         saveResult = await this.saveTextShareLink(content);
-            //         console.log('保存结果:', saveResult);
-            //     }
-            // } catch (error) {
-            //     console.error('保存失败:', error);
-            //     saveResult = { success: [], failed: [] };
-            //     return [false, '保存失败: ' + error.message, saveResult];
-            // }
+
             const fileInfoList = await this.parseShareLink(content);
             if (!fileInfoList[0]) {
                 saveResult.failed.push(...fileInfoList[3]); // 添加解析失败的文件
                 return [false, '保存失败: ' + fileInfoList[1], saveResult];
             }
-            saveResult = await this._saveFileList(await this._makeDirForFiles(fileInfoList[2]));
+            saveResult = await this._saveFileList(await this._makeDirForFiles(fileInfoList[2], fileInfoList[4]));
             saveResult.failed.push(...fileInfoList[3]); // 添加解析失败的文件
+            saveResult.commonPath = fileInfoList[4];
             return [true, null, saveResult];
         }
 
@@ -1599,6 +1558,7 @@
          * 失败的文件列表 - this.saveShareLink()[2].failed
          * @returns
          */
+        // // TODO commonPath 处理
         async retrySaveFailed(FileList) {
             return [true, null, await this._saveFileList(FileList)];
         }
@@ -1685,13 +1645,13 @@
                 parentFolderId = await this.apiClient.getParentFileId();
             }
             // 先根据fileSelectionDetails 生成一级秒传链接
-            const [linkSuccess, linkError, shareLink] = await this.generateShareLink(fileSelectionDetails);
+            const [linkSuccess, linkError, shareLink] = await this.generateShareLink(fileSelectionDetails, this.secondaryLinkUseJson);
             if (!linkSuccess) {
                 return [false, '生成一级秒传链接失败: ' + linkError, null];
             }
             // 判断文件名
             if (!fileName || fileName.trim() === '') {
-                fileName = this.getExportFilename(shareLink) + '.123fastlink.txt';
+                fileName = await this.getExportFilename(shareLink) + '.123fastlink.' + (this.secondaryLinkUseJson ? 'json' : 'txt');
             }
             // 然后保存为文本文件
             const saveResult = await this.apiClient.createTextFileInFolder(fileName, shareLink, parentFolderId);
@@ -1702,7 +1662,7 @@
             const fileInfo = saveResult[3]; // {fileName, etag, size}
             fileInfo.path = fileName;
             // 最后生成二级秒传链接
-            const secondaryShareLink = this.buildShareLink([fileInfo], '')[2];
+            const secondaryShareLink = this.buildShareLink([fileInfo], '', false)[2];
             return [true, null, secondaryShareLink];
         }
 
@@ -1749,7 +1709,7 @@
         /**
          * 解析JSON格式的秒传链接
          * @param {object} jsonData
-         * @returns {Array} - [boolean, string, [{etag: string, size: number, path: string, fileName: string}]] - 是否成功, 错误信息, 文件列表
+         * @returns {Array} - [boolean, string, [{etag: string, size: number, path: string, fileName: string}], commonPath] - 是否成功, 错误信息, 文件列表
          */
         _parseJsonShareLink(jsonData) {
             // 如果是字符串，先尝试解析为JSON对象
@@ -1761,7 +1721,8 @@
             }
             let failedList = [];
             try {
-                this.commonPath = jsonData['commonPath'] || '';
+                const commonPath = jsonData['commonPath'] || '';
+                // this.commonPath = commonPath;
                 const shareFileList = jsonData['files'];
                 if (jsonData['usesBase62EtagsInExport']) {
                     shareFileList.forEach(file => {
@@ -1780,19 +1741,27 @@
                 shareFileList.forEach(file => {
                     file.fileName = file.path.split('/').pop();
                 });
-                return [true, null, shareFileList, failedList];
+                return [true, null, shareFileList, failedList, commonPath];
             } catch (error) {
                 console.error('[123FASTLINK] [ShareLinkManager]', '解析JSON格式秒传链接失败:', error);
-                return [false, '解析JSON格式秒传链接失败: ' + error.message, null];
+                return [false, '解析JSON格式秒传链接失败: ' + error.message, null, null];
             }
         }
 
         // 格式化文件大小
         _formatSize(size) {
-            if (size < 1024) return size + ' B';
-            if (size < 1024 * 1024) return (size / 1024).toFixed(2) + ' KB';
-            if (size < 1024 * 1024 * 1024) return (size / 1024 / 1024).toFixed(2) + ' MB';
-            return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+            const KB = 1024;
+            const MB = KB * 1024;
+            const GB = MB * 1024;
+            const TB = GB * 1024;
+            const PB = TB * 1024;
+
+            if (size < KB) return size + ' B';
+            if (size < MB) return (size / KB).toFixed(2) + ' KB';
+            if (size < GB) return (size / MB).toFixed(2) + ' MB';
+            if (size < TB) return (size / GB).toFixed(2) + ' GB';
+            if (size < PB) return (size / TB).toFixed(2) + ' TB';
+            return (size / PB).toFixed(2) + ' PB';
         }
 
         validateJson(json) {
@@ -1804,39 +1773,40 @@
          * @param {*} shareLink
          * @returns
          */
-        shareLinkToJson(shareLink) {
-            const fileInfo = this._parseTextShareLink(shareLink);
-            if (!fileInfo[0]) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', fileInfo[1]);
-                return {
-                    error: '解析秒传链接失败: ' + fileInfo[1]
-                };
-            }
-            const fileInfoData = fileInfo[2];
-            if (fileInfoData.length === 0) {
+        textShareLinkToJson(shareLink) {
+            const [, , fileInfoList, , commonPath] = this._parseTextShareLink(shareLink);
+            // const commonPath = this.commonPath;
+            return this._buildJsonShareLink(fileInfoList, commonPath, this.usesBase62EtagsInExport);
+        }
+
+        _buildJsonShareLink(fileInfoList, commonPath = '', usesBase62EtagsInExport = false) {
+            if (fileInfoList.length === 0) {
                 console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
                 return [false, '解析秒传链接失败: 文件列表为空', null];
             }
-            if (this.usesBase62EtagsInExport) {
-                fileInfoData.forEach(f => {
-                    f.etag = this._hexToBase62(f.etag);
-                });
-            }
-            const totalSize = fileInfoData.reduce((sum, f) => sum + Number(f.size), 0);
+            // if (usesBase62EtagsInExport) {
+            //     fileInfoList.forEach(f => {
+            //         f.etag = this._hexToBase62(f.etag);
+            //     });
+            // }
+            const totalSize = fileInfoList.reduce((sum, f) => sum + Number(f.size), 0);
             const jsonData = {
                 scriptVersion: this.scriptVersion,
                 exportVersion: "1.0",
-                usesBase62EtagsInExport: this.usesBase62EtagsInExport,
-                commonPath: this.commonPath,
-                totalFilesCount: fileInfoData.length,
+                usesBase62EtagsInExport: usesBase62EtagsInExport,
+                commonPath: commonPath,
+                totalFilesCount: fileInfoList.length,
                 totalSize,
                 formattedTotalSize: this._formatSize(totalSize),
-                files: fileInfoData.map(f => ({
-                    // 去掉fileName
-                    ...f, fileName: undefined
-                }))
+                files: fileInfoList.map(
+                    f => ({
+                        // 去掉fileName
+                        ...f, fileName: undefined,
+                        etag: usesBase62EtagsInExport ? this._hexToBase62(f.etag) : f.etag
+                    })
+                )
             };
-            return [true, null, jsonData];
+            return [true, null, JSON.stringify(jsonData, null, 2)];
         }
 
         /**
@@ -1850,34 +1820,35 @@
                 return [false, '无效的JSON格式', null];
             }
             const shareFileList = this._parseJsonShareLink(jsonData);
-            if (!shareFileList[0]) {
-                return [false, '解析JSON失败: ' + shareFileList[1], null];
+            const [success, errorMsg, filePath, fileName, etag] = shareFileList;
+            if (!success) {
+                return [false, '解析JSON失败: ' + errorMsg, null];
             }
-
-            return this.buildShareLink(shareFileList[2], this.commonPath);
+            return this.buildShareLink(filePath, etag, false);
         }
         // -------------------工具函数----------------------- 
         /**
          * 获取导出文件名，默认根据公共路径或第一个文件名生成，不带扩展名
-         * @param {string} shareLink 
+         * @param {string} shareLink(text) 
          * @param {string} defaultName 
          * @returns 
          */
-        getExportFilename(shareLink, defaultName = this.defaultExportName) {
-            if (this.commonPath) {
-                const commonPath = this.commonPath.replace(/\/$/, ''); // 去除末尾斜杠
-                return `${commonPath}`;
+        async getExportFilename(shareLink, defaultName = this.defaultExportName) {
+            const [success, , fileInfoList, , commonPath] = await this.parseShareLink(shareLink);
+            if (!success) {
+                return defaultName;
             }
-            const lines = shareLink.trim().split('\n').filter(Boolean);
-            if (lines.length === 0) return defaultName;
-            const firstLine = lines[0];
-            const parts = firstLine.split('#');
-            if (parts.length >= 3) {
-                const fileName = parts[2];
-                const baseName = fileName.split('/').pop().split('.')[0] || 'export';
+            if (commonPath) {
+                const commonPathClean = commonPath.replace(/\/$/, '');
+                return `${commonPathClean}`;
+            }
+            // 获取第一个文件名
+
+            if (fileInfoList.length > 0) {
+                const firstFileName = fileInfoList[0].fileName;
+                const baseName = firstFileName.split('.')[0] || 'export';
                 return `${baseName}`;
             }
-            return defaultName;
         }
 
         linkChecker(shareLink) {
@@ -1903,19 +1874,13 @@
             this.selector = selector;
             this.isProgressMinimized = false;
             this.minimizeWidgetId = 'progress-minimize-widget';
-            // this.currentShareLink = ''; // 存储当前秒传链接
-            // taskList = [{id: string, type: 'generate'|'save', params: {}}]
-            this.taskList = []; // 任务列表
-            this.isTaskRunning = false; // 任务是否在运行
-            this.taskIdCounter = 0; // 任务ID计数器
-            this.currentTask = null; // 当前正在执行的任务
-            // this.taskCancel = false; // 取消当前任务的请求标志
             this.settings = [
                 { key: "scriptVersion", label: "脚本版本", type: "text", value: this.shareLinkManager.scriptVersion, readonly: true },
                 { key: "COMMON_PATH_LINK_PREFIX_V2", label: "公共路径链接前缀", type: "text", value: this.shareLinkManager.COMMON_PATH_LINK_PREFIX_V2, readonly: true },
                 { key: "DEFAULT_EXPORT_FILENAME", label: "默认导出文件名", type: "text", value: this.shareLinkManager.defaultExportName, description: "当无法从公共路径或文件名生成时使用此默认名称" },
-                { key: "seedFilePathId", label: "种子文件夹ID", type: "number", value: GlobalConfig.seedFilePathId, description: "用于保存二级秒传链接文件的文件夹ID，留空则使用当前文件夹" },
+                { key: "seedFilePathId", label: "秒传文件保存文件夹ID", type: "number", value: GlobalConfig.seedFilePathId, description: "用于保存二级秒传链接文件的文件夹ID，留空则使用当前文件夹" },
                 { key: "usesBase62EtagsInExport", label: "Base62编码", type: "checkbox", value: GlobalConfig.usesBase62EtagsInExport, description: "Base62编码的etag可以减少链接长度，但不兼容旧版本脚本" },
+                { key: "secondaryLinkUseJson", label: "二级秒传链接使用JSON格式", type: "checkbox", value: GlobalConfig.secondaryLinkUseJson, description: "启用后生成二级秒传链接时秒传文件将采用JSON格式" },
                 { key: "getFileListPageDelay", label: "获取文件列表每页延时 (毫秒)", type: "number", value: GlobalConfig.getFileListPageDelay },
                 { key: "getFileInfoBatchSize", label: "批量获取文件信息的数量", type: "number", value: GlobalConfig.getFileInfoBatchSize },
                 { key: "getFileInfoDelay", label: "获取文件信息延时 (毫秒)", type: "number", value: GlobalConfig.getFileInfoDelay },
@@ -1962,6 +1927,110 @@
                 </svg>`
             };
 
+            // --------------------------任务相关----------------------------
+            // taskList = [{id: string, type: 'generate'|'save', params: {}}]
+            this.taskList = [];                 // 任务列表
+            this.taskIdCounter = 0;             // 任务ID计数器
+            this.currentTask = null;            // 当前正在执行的任务
+            this.isTaskRunning = false;         // 任务是否在运行
+
+            // 任务处理器
+            this.taskHandlers = {
+                'generate': {
+                    addTask: function (params = {}) {
+                        const fileSelectInfo = this.selector.getSelection();
+                        if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                            this.showToast("请先选择文件", 'warning');
+                            return null;
+                        }
+                        return { type: 'generate', params: { fileSelectInfo } };
+                    },
+                    handler: async function (task) {
+                        await this.launchGenerateModal(task.params.fileSelectInfo);
+                    },
+                    description: '生成秒传链接'
+                },
+                'generateSecondary': {
+                    addTask: function (params = {}) {
+                        const fileSelectInfo = this.selector.getSelection();
+                        if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                            this.showToast("请先选择文件", 'warning');
+                            return null;
+                        }
+                        return { type: 'generateSecondary', params: { fileSelectInfo } };
+                    },
+                    handler: async function (task) {
+                        await this.launchSecondaryGenerateModal(task.params.fileSelectInfo);
+                    },
+                    description: '生成二级秒传链接'
+                },
+                'save': {
+                    addTask: function (params = {}) {
+                        return { type: 'save', params: { content: params.content } };
+                    },
+                    handler: async function (task) {
+                        await this.launchSaveLink(task.params.content);
+                    },
+                    description: '保存秒传链接'
+                },
+                'retry': {
+                    addTask: function (params = {}) {
+                        return { type: 'retry', params: { fileList: params.fileList } };
+                    },
+                    handler: async function (task) {
+                        await this.launchSaveLink(task.params.fileList, true);
+                    },
+                    description: '重试保存失败的文件'
+                },
+                'saveOnlyLink': {
+                    addTask: function (params = {}) {
+                        return {
+                            type: 'saveOnlyLink',
+                            params: {
+                                content: params.content,
+                                fileName: params.fileName || '123FastLink.123share'
+                            }
+                        };
+                    },
+                    handler: async function (task) {
+                        await this.launchSaveLinkOnlyText(task.params.content, task.params.fileName);
+                    },
+                    description: '保存为文本文件'
+                },
+                'saveSecondary': {
+                    addTask: function (params = {}) {
+                        return { type: 'saveSecondary', params: { content: params.content } };
+                    },
+                    handler: async function (task) {
+                        await this.launchSaveSecondaryLink(task.params.content);
+                    },
+                    description: '保存二级秒传链接'
+                },
+                'convert': {
+                    addTask: function (params = {}) {
+                        return { type: 'convert', params: { content: params.content } };
+                    },
+                    handler: async function (task) {
+                        await this.launchConvert(task.params.content);
+                    },
+                    description: '转换链接格式'
+                },
+                'saveFromFile': {
+                    addTask: function (params = {}) {
+                        const fileSelectInfo = this.selector.getSelection();
+                        if (!fileSelectInfo || fileSelectInfo.length === 0) {
+                            this.showToast("请先选择文件", 'warning');
+                            return null;
+                        }
+                        return { type: 'saveFromFile', params: { fileSelectInfo } };
+                    },
+                    handler: async function (task) {
+                        await this.launchSaveFromFile(task.params.fileSelectInfo);
+                    },
+                    description: '从秒传文件获取并保存'
+                }
+            };
+
             this.resetSettings();
         }
 
@@ -1976,6 +2045,7 @@
         init() {
             // 按钮插入 ==========================================
             // todo: 二级链接转换
+            // 定义功能按钮
             const features = [
                 {
                     iconKey: 'generate',
@@ -2460,7 +2530,7 @@
                 this.showAlertModal('error', '重置所有设置？', '该操作将清除 GM 存储并刷新页面恢复默认配置！', {
                     confirmText: '立即重置', showCancel: true,
                     onConfirm: () => {
-                        editingSettings.forEach(s => GM_deleteValue(s.key));
+                        deleteSettings();
                         location.reload();
                     }
                 });
@@ -2485,7 +2555,7 @@
                 `如果您是第一次使用本脚本，建议先阅读使用说明文档，了解基本功能和操作方法。
                 \n
                 ✅️ 如果要使用二级秒传链接，
-                建议先在设置中设置种子文件路径`);
+                建议先在设置中设置秒传文件路径`);
         }
 
         /**
@@ -2625,8 +2695,8 @@
 
                 if (type === 'json') {
                     if (contentType[2] === 'text') {
-                        const contentToCopyInfo = this.shareLinkManager.shareLinkToJson(contentToCopy)[2];
-                        contentToCopy = JSON.stringify(contentToCopyInfo, null, 2);
+                        contentToCopy = this.shareLinkManager.textShareLinkToJson(contentToCopy)[2];
+                        // contentToCopy = JSON.stringify(contentToCopyInfo, null, 2);
                     }
                 } else if (type === 'text') {
                     if (contentType[2] === 'json') {
@@ -2656,16 +2726,16 @@
                 return;
             }
 
-            try {
-                const jsonData = this.shareLinkManager.shareLinkToJson(shareLink)[2];
-                const jsonContent = JSON.stringify(jsonData, null, 2);
-                const filename = this.shareLinkManager.getExportFilename(shareLink) + '.json';
 
-                this.downloadJsonFile(jsonContent, filename);
+            const jsonContent = this.shareLinkManager.textShareLinkToJson(shareLink)[2];
+            // const jsonContent = JSON.stringify(jsonData, null, 2);
+            this.shareLinkManager.getExportFilename(shareLink).then(filename => {
+                this.downloadJsonFile(JSON.stringify(jsonContent, null, 2), filename + '.json');
                 this.showToast('JSON文件导出成功 📁', 'success');
-            } catch (error) {
-                this.showToast('导出失败: ' + error.message, 'error');
-            }
+            }).catch(err => {
+                this.showToast(`导出失败: ${err.message || '请重试'}`, 'error');
+            });
+
         }
 
         // 下载JSON文件
@@ -2800,17 +2870,13 @@
                 <div class="task-list" id="task-list">
                     ${this.taskList.map(task => {
                 const isCurrentTask = this.currentTask && this.currentTask.id === task.id;
-                const typeIcon = task.type === 'generate' ? 'generate' :
-                    task.type === 'save' ? 'save' : 'retry';
-                const typeText = task.type === 'generate' ? '生成' :
-                    task.type === 'save' ? '保存' : '重试';
-
+                const typeIcon = task.type === 'generate' ? 'generate' : task.type === 'save' ? 'save' : 'retry';
                 return `
                             <div class="task-item ${isCurrentTask ? 'current' : ''}" data-task-id="${task.id}">
                                 <div class="task-info">
                                     <div class="task-icon ${typeIcon}"></div>
                                     <div>
-                                        <div class="task-name">${typeText}秒传链接</div>
+                                        <div class="task-name">${this.taskHandlers[task.type].description}</div>
                                         ${isCurrentTask ? '<div class="task-status">执行中...</div>' : ''}
                                     </div>
                                 </div>
@@ -2824,9 +2890,9 @@
                             </div>
                         `;
             }).join('')}
-                </div>
-            </div>
-        `;
+                        </div>
+                    </div>
+                `;
 
             const bindEvents = (container) => {
                 const toggle = container.querySelector('#task-list-toggle');
@@ -2921,7 +2987,7 @@
                 </div>
                 <div class="widget-percent">${percent}%</div>
             </div>
-        `;
+            `;
 
             if (!widget) {
                 widget = document.createElement('div');
@@ -2987,12 +3053,28 @@
         /**
          * 显示保存结果模态框
          * @param result - {success: [], failed: []}
-         * @returns {Promise<void>}
+         * @returns null
          */
         async showSaveResultsModal(result) {
             const totalCount = result.success.length + result.failed.length;
             const successCount = result.success.length;
             const failedCount = result.failed.length;
+
+            // 成功的列表是后加的，先借用失败的样式了
+            const successListHtml = successCount > 0 ? `
+            <div style="margin-top: 20px;">
+                <div style="font-size: 13px; font-weight: 500; color: var(--info-color); margin-bottom: 8px;">
+                    成功文件列表
+                </div>
+                <div class="failed-list">
+                    ${result.success.map(fileInfo => `
+                        <div class="failed-item">
+                            <div class="failed-name">${fileInfo.fileName}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            ` : '';
 
             const failedListHtml = failedCount > 0 ? `
             <div style="margin-top: 20px;">
@@ -3008,7 +3090,7 @@
                     `).join('')}
                 </div>
             </div>
-        ` : '';
+            ` : '';
 
             const modalOverlay = document.createElement('div');
             modalOverlay.className = 'modal-overlay';
@@ -3043,6 +3125,7 @@
                     <div style="text-align: center; font-size: 13px; color: var(--text-secondary); margin: 20px 0;">
                         总计处理 <strong>${totalCount}</strong> 个文件
                     </div>
+                    ${successListHtml}
                     ${failedListHtml}
                 </div>
                 <div class="modal-footer">
@@ -3079,7 +3162,7 @@
                     ` : ''}
                 </div>
             </div>
-        `;
+            `;
 
             if (failedCount > 0) {
                 const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
@@ -3091,7 +3174,7 @@
                         if (action === 'retry') {
                             this.addAndRunTask('retry', { fileList: result.failed });
                         } else if (action === 'export') {
-                            const shareLinkResult = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '');
+                            const shareLinkResult = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '', false);
                             this.showCopyModal(shareLinkResult[2], shareLinkResult[3] || [], "导出失败链接");
                         }
                     });
@@ -3351,6 +3434,11 @@
          * @param {string} fileName 
          */
         async launchSaveLinkOnlyText(linkText, fileName) {
+            // 链接格式校验
+            const textType = this.shareLinkManager.linkChecker(linkText);
+            if (!textType[0]) {
+                this.showAlertModal('warning', '格式错误', '秒传链接格式无法识别，链接仍将被保存！');
+            }
             const poll = this.startRollPolling("保存秒传链接");
             const saveResult = await this.shareLinkManager.saveShareLinkOnlyText(linkText, fileName);
             this.stopRollPolling(poll);
@@ -3378,8 +3466,8 @@
             if (textType[2] === 'json') {
                 shareLink = this.shareLinkManager.jsonToTextShareLink(content)[2];
             } else if (textType[2] === 'text') {
-                const shareLinkDict = this.shareLinkManager.shareLinkToJson(content)[2];
-                shareLink = JSON.stringify(shareLinkDict, null, 2);
+                shareLink = this.shareLinkManager.textShareLinkToJson(content)[2];
+                // shareLink = JSON.stringify(shareLinkDict, null, 2);
             }
             this.showCopyModal(shareLink, []);
         }
@@ -3596,58 +3684,51 @@
         }
 
         /**
+         * 解析、添加并触发任务
+         * @param taskType - 任务类型（generate/save/retry等）
+         * @param params - 任务参数
+         */
+        addAndRunTask(taskType, params = {}) {
+            const taskConfig = this.taskHandlers[taskType];
+
+            if (!taskConfig) {
+                console.warn(`未知的 taskType: ${taskType}`);
+                this.showToast(`未知的任务类型: ${taskType}`, 'error');
+                return;
+            }
+
+            const taskData = taskConfig.addTask.call(this, params);
+            if (!taskData) return;
+
+            const taskId = ++this.taskIdCounter;
+            const task = { id: taskId, ...taskData };
+            this.taskList.push(task);
+            this.runNextTask();
+        }
+
+        /**
          * 队列 - 运行下一个任务
          * @returns {null|void}
          */
         runNextTask() {
             if (this.isTaskRunning) return this.showToast("已添加到队列，稍后执行", 'info');
             if (this.taskList.length === 0) return null;
-
-            // 任务处理函数映射
-            const taskHandlerMap = {
-                'generate': async (task) => {
-                    await this.launchGenerateModal(task.params.fileSelectInfo);
-                },
-                'generateSecondary': async (task) => {
-                    await this.launchSecondaryGenerateModal(task.params.fileSelectInfo);
-                },
-                'save': async (task) => {
-                    await this.launchSaveLink(task.params.content);
-                },
-                'retry': async (task) => {
-                    await this.launchSaveLink(task.params.fileList, true);
-                },
-                'saveOnlyLink': async (task) => {
-                    await this.launchSaveLinkOnlyText(task.params.content, task.params.fileName || '123FastLink.123share');
-                },
-                'saveSecondary': async (task) => {
-                    await this.launchSaveSecondaryLink(task.params.content);
-                },
-                'convert': async (task) => {
-                    await this.launchConvert(task.params.content);
-                },
-                'saveFromFile': async (task) => {
-                    await this.launchSaveFromFile(task.params.fileSelectInfo);
-                }
-            };
-
             // 找到第一个未执行的任务
             const task = this.taskList.find(t => !this.currentTask || t.id !== this.currentTask.id);
             if (!task) return null;
-
             // 标记当前任务
             this.currentTask = task;
-
+            const taskConfig = this.taskHandlers[task.type];
             // 执行任务
             setTimeout(async () => {
                 this.isTaskRunning = true;
-
-                if (taskHandlerMap[task.type]) {
+                if (taskConfig && taskConfig.handler) {
                     try {
-                        await taskHandlerMap[task.type](task);
+                        await taskConfig.handler.call(this, task);
                     } catch (error) {
                         console.error(`任务${task.id}执行失败:`, error);
-                        this.showAlertModal('error', '任务执行失败', `任务${task.id}执行过程中出现错误: ${error.message}`);
+                        this.showAlertModal('error', '任务执行失败',
+                            `任务${task.id}执行过程中出现错误: ${error.message}`);
                         this.showToast(`任务${task.id}执行失败: ${error.message}`, 'error');
                     }
                 } else {
@@ -3662,68 +3743,6 @@
             this.showToast(`任务${task.id}开始执行...`, 'info');
         }
 
-        /**
-         * 解析、添加并触发任务
-         * @param taskType  - 任务类型（generate/save/retry）
-         * @param params - 任务参数
-         */
-        addAndRunTask(taskType, params = {}) {
-            const taskId = ++this.taskIdCounter;
-            let fileSelectInfo = null;
-            switch (taskType) {
-                case 'generate':
-                    // 先获取选中文件信息，防止任务执行时选择变更
-                    fileSelectInfo = this.selector.getSelection();
-                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
-                        this.showToast("请先选择文件", 'warning');
-                        return;
-                    }
-                    this.taskList.push({ id: taskId, type: 'generate', params: { fileSelectInfo } });
-                    break;
-                case 'generateSecondary':
-                    // 先获取选中文件信息，防止任务执行时选择变更
-                    fileSelectInfo = this.selector.getSelection();
-                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
-                        this.showToast("请先选择文件", 'warning');
-                        return;
-                    }
-                    this.taskList.push({ id: taskId, type: 'generateSecondary', params: { fileSelectInfo } });
-                    break;
-
-                case 'save':
-                    this.taskList.push({ id: taskId, type: 'save', params: { content: params.content } });
-                    break;
-
-                case 'retry':
-                    this.taskList.push({ id: taskId, type: 'retry', params: { fileList: params.fileList } });
-                    break;
-
-                case 'saveOnlyLink':
-                    this.taskList.push({ id: taskId, type: 'saveOnlyLink', params: { content: params.content } });
-                    break;
-                case 'saveSecondary':
-                    this.taskList.push({ id: taskId, type: 'saveSecondary', params: { content: params.content } });
-                    break;
-                case 'convert':
-                    this.taskList.push({ id: taskId, type: 'convert', params: { content: params.content } });
-                    break;
-                case 'saveFromFile':
-                    fileSelectInfo = this.selector.getSelection();
-                    if (!fileSelectInfo || fileSelectInfo.length === 0) {
-                        this.showToast("请先选择文件", 'warning');
-                        return;
-                    }
-                    this.taskList.push({ id: taskId, type: 'saveFromFile', params: { fileSelectInfo } });
-                    break;
-                default:
-                    // 未知的 taskType
-                    console.warn(`未知的 taskType: ${taskType}`);
-                    this.showToast(`未知的任务类型: ${taskType}`, 'error');
-                    break;
-            }
-            this.runNextTask();
-        }
-
         /** 任务取消
          * @returns {boolean}
          */
@@ -3736,10 +3755,6 @@
         addButton(features, options = {}) {
             const buttonExist = document.querySelector('.mfy-button-container');
             if (buttonExist) return;
-
-            // const isFilePage = window.location.pathname === "/" &&
-            //     (window.location.search === "" || window.location.search.includes("homeFilePath"));
-            // if (!isFilePage) return;
 
             const container = document.querySelector('.home-operator-button-group');
             if (!container) return;
@@ -3840,6 +3855,11 @@
             ...settings
         };
         GM_setValue('fastlink_settings', settings);
+    }
+
+    function deleteSettings() {
+        GM_setValue('fastlink_settings', null);
+        GM_setValue('fastlink_first_time', true);
     }
 
     function isFirstTime() {
