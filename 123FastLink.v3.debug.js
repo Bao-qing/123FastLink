@@ -2245,17 +2245,17 @@
                 .failed-item:last-child{margin-bottom:0}
                 .failed-name{color:var(--text-primary);word-break:break-all}
                 .failed-error{color:var(--danger-color);font-size:11px;margin-top:4px}
-                .mfy-button-container{position:relative;display:inline-block}
-                .mfy-button{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow)}
-                .mfy-button:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg)}
-                .mfy-button svg{width:16px;height:16px}
-                .mfy-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:160px;z-index:1000;opacity:0;transform:translateY(-10px);visibility:hidden;transition:var(--transition)}
-                .mfy-button-container:hover .mfy-dropdown{opacity:1;transform:translateY(0);visibility:visible}
-                .mfy-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
-                .mfy-dropdown-item:hover{background:var(--surface)}
-                .mfy-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
-                .mfy-dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}
-                .mfy-dropdown-divider{height:1px;background:var(--border);margin:4px 0}
+                .fs-mfy-button-container{position:relative;display:inline-block}
+                .fs-mfy-button{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow)}
+                .fs-mfy-button:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+                .fs-mfy-button svg{width:16px;height:16px}
+                .fs-mfy-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:160px;z-index:1000;opacity:0;transform:translateY(-10px);visibility:hidden;transition:var(--transition)}
+                .fs-mfy-button-container:hover .fs-mfy-dropdown{opacity:1;transform:translateY(0);visibility:visible}
+                .fs-mfy-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
+                .fs-mfy-dropdown-item:hover{background:var(--surface)}
+                .fs-mfy-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
+                .fs-mfy-dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}
+                .fs-mfy-dropdown-divider{height:1px;background:var(--border);margin:4px 0}
                 @keyframes fadeIn{from{opacity:0}
                 to{opacity:1}
                 }@keyframes slideUp{from{opacity:0;transform:translateY(20px)}
@@ -3753,28 +3753,28 @@
 
 
         addButton(features, options = {}) {
-            const buttonExist = document.querySelector('.mfy-button-container');
+            const buttonExist = document.querySelector('.fs-mfy-button-container');
             if (buttonExist) return;
 
             const container = document.querySelector('.home-operator-button-group');
             if (!container) return;
 
             const btnContainer = document.createElement('div');
-            btnContainer.className = 'mfy-button-container';
+            btnContainer.className = 'fs-mfy-button-container';
 
             const btn = document.createElement('button');
-            btn.className = 'ant-btn css-1bw9b22 ant-btn-primary ant-btn-variant-solid mfy-button upload-button'; // 利用现有样式
+            btn.className = 'ant-btn css-1bw9b22 ant-btn-primary ant-btn-variant-solid mfy-button fs-mfy-button upload-button'; // 利用现有样式
             btn.style = "background-color: #5ebf70;";
             btn.innerHTML = `${this.iconLibrary.transfer}<span>${options.buttonText || '秒传'}</span>`;
 
             const dropdown = document.createElement('div');
-            dropdown.className = 'mfy-dropdown';
+            dropdown.className = 'fs-mfy-dropdown';
 
             // 根据功能列表创建下拉项
             features.forEach(feature => {
                 const icon = this.iconLibrary[feature.iconKey] || feature.iconKey || '';
                 const itemElement = document.createElement('div');
-                itemElement.className = 'mfy-dropdown-item';
+                itemElement.className = 'fs-mfy-dropdown-item';
                 itemElement.innerHTML = `${icon}${feature.text}`;
 
                 itemElement.addEventListener('click', async (e) => {
