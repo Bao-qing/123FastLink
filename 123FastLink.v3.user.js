@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.27.1
+// @version      2026.1.28.1
 // @description  123云盘秒传链接脚本
 // @author       Baoqing
 // @author       Chaofan
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     var GlobalConfig = {
-        scriptVersion: "3.1.2",                     // 脚本版本
+        scriptVersion: "3.1.3",                     // 脚本版本
         usesBase62EtagsInExport: true,              // 导出时使用Base62编码的etag
         getFileListPageDelay: 500,                  // 获取文件列表每页延时
         getFileInfoBatchSize: 100,                  // 批量获取文件信息的数量
@@ -30,8 +30,7 @@
         COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$",   // 通用路径链接前缀V2
         MAX_TEXT_FILE_SIZE: 3 * 1024 * 1024,        // 文本文件最大3MB
         DEFAULT_EXPORT_FILENAME: "123FastLink_Export", // 默认导出文件名
-        DEBUGMODE: false,
-        seedFilePathId: null,                        // 种子文件路径ID
+        DEBUGMODE: false, seedFilePathId: null,                        // 种子文件路径ID
         secondaryLinkUseJson: true                  // 二级秒传链接使用JSON格式
     };
 
@@ -103,7 +102,7 @@
             const data = await this.sendRequest("GET", "/b/api/file/list/new", urlParams);
             //console.log("[123FASTLINK] [PanApiClient]", "获取文件列表:", data.data.InfoList);
             console.log("[123FASTLINK] [PanApiClient]", "获取文件列表 ID：", parentFileId, "Page：", page);
-            return { data: { InfoList: data.data.InfoList }, total: data.data.Total };
+            return {data: {InfoList: data.data.InfoList}, total: data.data.Total};
             //return { data: { fileList: data.data.fileList } };
         }
 
@@ -129,13 +128,13 @@
                 }
             }
             this.progress = 100;
-            return { data: { InfoList }, total: total };
+            return {data: {InfoList}, total: total};
         }
 
         async getFileInfo(idList) {
-            const fileIdList = idList.map(fileId => ({ fileId }));
-            const data = await this.sendRequest("POST", "/b/api/file/info", {}, JSON.stringify({ fileIdList }));
-            return { data: { InfoList: data.data.infoList } };
+            const fileIdList = idList.map(fileId => ({fileId}));
+            const data = await this.sendRequest("POST", "/b/api/file/info", {}, JSON.stringify({fileIdList}));
+            return {data: {InfoList: data.data.infoList}};
         }
 
         // 尝试秒传
@@ -172,7 +171,7 @@
         /**
          * 获取文件，尝试秒传
          * @param {dict} fileInfo - 文件信息字典，包含 etag, fileName, size 字段
-         * @param {string} parentFileId 
+         * @param {string} parentFileId
          * @returns [boolean, string] - [是否成功, 错误信息]
          */
         async getFile(fileInfo, parentFileId) {
@@ -233,44 +232,129 @@
 
         md5(inputString) {
             var hc = "0123456789abcdef";
-            function rh(n) { var j, s = ""; for (j = 0; j <= 3; j++) s += hc.charAt((n >> (j * 8 + 4)) & 0x0F) + hc.charAt((n >> (j * 8)) & 0x0F); return s; }
-            function ad(x, y) { var l = (x & 0xFFFF) + (y & 0xFFFF); var m = (x >> 16) + (y >> 16) + (l >> 16); return (m << 16) | (l & 0xFFFF); }
-            function rl(n, c) { return (n << c) | (n >>> (32 - c)); }
-            function cm(q, a, b, x, s, t) { return ad(rl(ad(ad(a, q), ad(x, t)), s), b); }
-            function ff(a, b, c, d, x, s, t) { return cm((b & c) | ((~b) & d), a, b, x, s, t); }
-            function gg(a, b, c, d, x, s, t) { return cm((b & d) | (c & (~d)), a, b, x, s, t); }
-            function hh(a, b, c, d, x, s, t) { return cm(b ^ c ^ d, a, b, x, s, t); }
-            function ii(a, b, c, d, x, s, t) { return cm(c ^ (b | (~d)), a, b, x, s, t); }
-            function sb(x) {
-                var i; var nblk = ((x.length + 8) >> 6) + 1; var blks = new Array(nblk * 16); for (i = 0; i < nblk * 16; i++) blks[i] = 0;
-                for (i = 0; i < x.length; i++) blks[i >> 2] |= x.charCodeAt(i) << ((i % 4) * 8);
-                blks[i >> 2] |= 0x80 << ((i % 4) * 8); blks[nblk * 16 - 2] = x.length * 8; return blks;
+
+            function rh(n) {
+                var j, s = "";
+                for (j = 0; j <= 3; j++) s += hc.charAt((n >> (j * 8 + 4)) & 0x0F) + hc.charAt((n >> (j * 8)) & 0x0F);
+                return s;
             }
-            var i, x = sb(inputString), a = 1732584193, b = -271733879, c = -1732584194, d = 271733878, olda, oldb, oldc, oldd;
+
+            function ad(x, y) {
+                var l = (x & 0xFFFF) + (y & 0xFFFF);
+                var m = (x >> 16) + (y >> 16) + (l >> 16);
+                return (m << 16) | (l & 0xFFFF);
+            }
+
+            function rl(n, c) {
+                return (n << c) | (n >>> (32 - c));
+            }
+
+            function cm(q, a, b, x, s, t) {
+                return ad(rl(ad(ad(a, q), ad(x, t)), s), b);
+            }
+
+            function ff(a, b, c, d, x, s, t) {
+                return cm((b & c) | ((~b) & d), a, b, x, s, t);
+            }
+
+            function gg(a, b, c, d, x, s, t) {
+                return cm((b & d) | (c & (~d)), a, b, x, s, t);
+            }
+
+            function hh(a, b, c, d, x, s, t) {
+                return cm(b ^ c ^ d, a, b, x, s, t);
+            }
+
+            function ii(a, b, c, d, x, s, t) {
+                return cm(c ^ (b | (~d)), a, b, x, s, t);
+            }
+
+            function sb(x) {
+                var i;
+                var nblk = ((x.length + 8) >> 6) + 1;
+                var blks = new Array(nblk * 16);
+                for (i = 0; i < nblk * 16; i++) blks[i] = 0;
+                for (i = 0; i < x.length; i++) blks[i >> 2] |= x.charCodeAt(i) << ((i % 4) * 8);
+                blks[i >> 2] |= 0x80 << ((i % 4) * 8);
+                blks[nblk * 16 - 2] = x.length * 8;
+                return blks;
+            }
+
+            var i, x = sb(inputString), a = 1732584193, b = -271733879, c = -1732584194, d = 271733878, olda, oldb,
+                oldc, oldd;
             for (i = 0; i < x.length; i += 16) {
-                olda = a; oldb = b; oldc = c; oldd = d;
-                a = ff(a, b, c, d, x[i + 0], 7, -680876936); d = ff(d, a, b, c, x[i + 1], 12, -389564586); c = ff(c, d, a, b, x[i + 2], 17, 606105819);
-                b = ff(b, c, d, a, x[i + 3], 22, -1044525330); a = ff(a, b, c, d, x[i + 4], 7, -176418897); d = ff(d, a, b, c, x[i + 5], 12, 1200080426);
-                c = ff(c, d, a, b, x[i + 6], 17, -1473231341); b = ff(b, c, d, a, x[i + 7], 22, -45705983); a = ff(a, b, c, d, x[i + 8], 7, 1770035416);
-                d = ff(d, a, b, c, x[i + 9], 12, -1958414417); c = ff(c, d, a, b, x[i + 10], 17, -42063); b = ff(b, c, d, a, x[i + 11], 22, -1990404162);
-                a = ff(a, b, c, d, x[i + 12], 7, 1804603682); d = ff(d, a, b, c, x[i + 13], 12, -40341101); c = ff(c, d, a, b, x[i + 14], 17, -1502002290);
-                b = ff(b, c, d, a, x[i + 15], 22, 1236535329); a = gg(a, b, c, d, x[i + 1], 5, -165796510); d = gg(d, a, b, c, x[i + 6], 9, -1069501632);
-                c = gg(c, d, a, b, x[i + 11], 14, 643717713); b = gg(b, c, d, a, x[i + 0], 20, -373897302); a = gg(a, b, c, d, x[i + 5], 5, -701558691);
-                d = gg(d, a, b, c, x[i + 10], 9, 38016083); c = gg(c, d, a, b, x[i + 15], 14, -660478335); b = gg(b, c, d, a, x[i + 4], 20, -405537848);
-                a = gg(a, b, c, d, x[i + 9], 5, 568446438); d = gg(d, a, b, c, x[i + 14], 9, -1019803690); c = gg(c, d, a, b, x[i + 3], 14, -187363961);
-                b = gg(b, c, d, a, x[i + 8], 20, 1163531501); a = gg(a, b, c, d, x[i + 13], 5, -1444681467); d = gg(d, a, b, c, x[i + 2], 9, -51403784);
-                c = gg(c, d, a, b, x[i + 7], 14, 1735328473); b = gg(b, c, d, a, x[i + 12], 20, -1926607734); a = hh(a, b, c, d, x[i + 5], 4, -378558);
-                d = hh(d, a, b, c, x[i + 8], 11, -2022574463); c = hh(c, d, a, b, x[i + 11], 16, 1839030562); b = hh(b, c, d, a, x[i + 14], 23, -35309556);
-                a = hh(a, b, c, d, x[i + 1], 4, -1530992060); d = hh(d, a, b, c, x[i + 4], 11, 1272893353); c = hh(c, d, a, b, x[i + 7], 16, -155497632);
-                b = hh(b, c, d, a, x[i + 10], 23, -1094730640); a = hh(a, b, c, d, x[i + 13], 4, 681279174); d = hh(d, a, b, c, x[i + 0], 11, -358537222);
-                c = hh(c, d, a, b, x[i + 3], 16, -722521979); b = hh(b, c, d, a, x[i + 6], 23, 76029189); a = hh(a, b, c, d, x[i + 9], 4, -640364487);
-                d = hh(d, a, b, c, x[i + 12], 11, -421815835); c = hh(c, d, a, b, x[i + 15], 16, 530742520); b = hh(b, c, d, a, x[i + 2], 23, -995338651);
-                a = ii(a, b, c, d, x[i + 0], 6, -198630844); d = ii(d, a, b, c, x[i + 7], 10, 1126891415); c = ii(c, d, a, b, x[i + 14], 15, -1416354905);
-                b = ii(b, c, d, a, x[i + 5], 21, -57434055); a = ii(a, b, c, d, x[i + 12], 6, 1700485571); d = ii(d, a, b, c, x[i + 3], 10, -1894986606);
-                c = ii(c, d, a, b, x[i + 10], 15, -1051523); b = ii(b, c, d, a, x[i + 1], 21, -2054922799); a = ii(a, b, c, d, x[i + 8], 6, 1873313359);
-                d = ii(d, a, b, c, x[i + 15], 10, -30611744); c = ii(c, d, a, b, x[i + 6], 15, -1560198380); b = ii(b, c, d, a, x[i + 13], 21, 1309151649);
-                a = ii(a, b, c, d, x[i + 4], 6, -145523070); d = ii(d, a, b, c, x[i + 11], 10, -1120210379); c = ii(c, d, a, b, x[i + 2], 15, 718787259);
-                b = ii(b, c, d, a, x[i + 9], 21, -343485551); a = ad(a, olda); b = ad(b, oldb); c = ad(c, oldc); d = ad(d, oldd);
+                olda = a;
+                oldb = b;
+                oldc = c;
+                oldd = d;
+                a = ff(a, b, c, d, x[i + 0], 7, -680876936);
+                d = ff(d, a, b, c, x[i + 1], 12, -389564586);
+                c = ff(c, d, a, b, x[i + 2], 17, 606105819);
+                b = ff(b, c, d, a, x[i + 3], 22, -1044525330);
+                a = ff(a, b, c, d, x[i + 4], 7, -176418897);
+                d = ff(d, a, b, c, x[i + 5], 12, 1200080426);
+                c = ff(c, d, a, b, x[i + 6], 17, -1473231341);
+                b = ff(b, c, d, a, x[i + 7], 22, -45705983);
+                a = ff(a, b, c, d, x[i + 8], 7, 1770035416);
+                d = ff(d, a, b, c, x[i + 9], 12, -1958414417);
+                c = ff(c, d, a, b, x[i + 10], 17, -42063);
+                b = ff(b, c, d, a, x[i + 11], 22, -1990404162);
+                a = ff(a, b, c, d, x[i + 12], 7, 1804603682);
+                d = ff(d, a, b, c, x[i + 13], 12, -40341101);
+                c = ff(c, d, a, b, x[i + 14], 17, -1502002290);
+                b = ff(b, c, d, a, x[i + 15], 22, 1236535329);
+                a = gg(a, b, c, d, x[i + 1], 5, -165796510);
+                d = gg(d, a, b, c, x[i + 6], 9, -1069501632);
+                c = gg(c, d, a, b, x[i + 11], 14, 643717713);
+                b = gg(b, c, d, a, x[i + 0], 20, -373897302);
+                a = gg(a, b, c, d, x[i + 5], 5, -701558691);
+                d = gg(d, a, b, c, x[i + 10], 9, 38016083);
+                c = gg(c, d, a, b, x[i + 15], 14, -660478335);
+                b = gg(b, c, d, a, x[i + 4], 20, -405537848);
+                a = gg(a, b, c, d, x[i + 9], 5, 568446438);
+                d = gg(d, a, b, c, x[i + 14], 9, -1019803690);
+                c = gg(c, d, a, b, x[i + 3], 14, -187363961);
+                b = gg(b, c, d, a, x[i + 8], 20, 1163531501);
+                a = gg(a, b, c, d, x[i + 13], 5, -1444681467);
+                d = gg(d, a, b, c, x[i + 2], 9, -51403784);
+                c = gg(c, d, a, b, x[i + 7], 14, 1735328473);
+                b = gg(b, c, d, a, x[i + 12], 20, -1926607734);
+                a = hh(a, b, c, d, x[i + 5], 4, -378558);
+                d = hh(d, a, b, c, x[i + 8], 11, -2022574463);
+                c = hh(c, d, a, b, x[i + 11], 16, 1839030562);
+                b = hh(b, c, d, a, x[i + 14], 23, -35309556);
+                a = hh(a, b, c, d, x[i + 1], 4, -1530992060);
+                d = hh(d, a, b, c, x[i + 4], 11, 1272893353);
+                c = hh(c, d, a, b, x[i + 7], 16, -155497632);
+                b = hh(b, c, d, a, x[i + 10], 23, -1094730640);
+                a = hh(a, b, c, d, x[i + 13], 4, 681279174);
+                d = hh(d, a, b, c, x[i + 0], 11, -358537222);
+                c = hh(c, d, a, b, x[i + 3], 16, -722521979);
+                b = hh(b, c, d, a, x[i + 6], 23, 76029189);
+                a = hh(a, b, c, d, x[i + 9], 4, -640364487);
+                d = hh(d, a, b, c, x[i + 12], 11, -421815835);
+                c = hh(c, d, a, b, x[i + 15], 16, 530742520);
+                b = hh(b, c, d, a, x[i + 2], 23, -995338651);
+                a = ii(a, b, c, d, x[i + 0], 6, -198630844);
+                d = ii(d, a, b, c, x[i + 7], 10, 1126891415);
+                c = ii(c, d, a, b, x[i + 14], 15, -1416354905);
+                b = ii(b, c, d, a, x[i + 5], 21, -57434055);
+                a = ii(a, b, c, d, x[i + 12], 6, 1700485571);
+                d = ii(d, a, b, c, x[i + 3], 10, -1894986606);
+                c = ii(c, d, a, b, x[i + 10], 15, -1051523);
+                b = ii(b, c, d, a, x[i + 1], 21, -2054922799);
+                a = ii(a, b, c, d, x[i + 8], 6, 1873313359);
+                d = ii(d, a, b, c, x[i + 15], 10, -30611744);
+                c = ii(c, d, a, b, x[i + 6], 15, -1560198380);
+                b = ii(b, c, d, a, x[i + 13], 21, 1309151649);
+                a = ii(a, b, c, d, x[i + 4], 6, -145523070);
+                d = ii(d, a, b, c, x[i + 11], 10, -1120210379);
+                c = ii(c, d, a, b, x[i + 2], 15, 718787259);
+                b = ii(b, c, d, a, x[i + 9], 21, -343485551);
+                a = ad(a, olda);
+                b = ad(b, oldb);
+                c = ad(c, oldc);
+                d = ad(d, oldd);
             }
             return rh(a) + rh(b) + rh(c) + rh(d);
         }
@@ -282,8 +366,7 @@
         async uploadRequest(fileInfo) {
             try {
                 const data = await this.sendRequest('POST', '/b/api/file/upload_request', {}, JSON.stringify({
-                    ...fileInfo,
-                    RequestSource: null
+                    ...fileInfo, RequestSource: null
                 }));
 
                 console.log('[123FASTLINK] [文本上传]', 'upload_request响应:', data);
@@ -345,18 +428,16 @@
         async uploadToS3Entire(presignedUrl, text) {
             try {
                 // 将文本转换为Blob
-                const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+                const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
 
                 console.log('[123FASTLINK] [文本上传]', '开始上传到S3:', presignedUrl);
 
                 // 移除 x-amz-acl 头，因为预签名URL通常已经包含了所有必要的认证信息
                 const response = await fetch(presignedUrl, {
-                    method: 'PUT',
-                    headers: {
+                    method: 'PUT', headers: {
                         'Content-Type': 'text/plain;charset=utf-8'
                         // 注意：不要添加 x-amz-acl，因为预签名URL已经包含了权限信息
-                    },
-                    body: blob
+                    }, body: blob
                 });
 
                 console.log('[123FASTLINK] [文本上传]', 'S3上传响应状态:', response.status, response.statusText);
@@ -371,8 +452,7 @@
                     if (response.status === 403 || response.status === 400) {
                         console.log('[123FASTLINK] [文本上传]', '尝试不带Content-Type头上传');
                         const retryResponse = await fetch(presignedUrl, {
-                            method: 'PUT',
-                            body: blob
+                            method: 'PUT', body: blob
                             // 完全不设置headers
                         });
 
@@ -399,13 +479,8 @@
         async completeUpload(fileId, bucket, fileSize, key, uploadId, storageNode) {
             try {
                 const data = await this.sendRequest('POST', '/b/api/file/upload_complete/v2', {}, JSON.stringify({
-                    fileId: fileId,
-                    bucket: bucket,
-                    fileSize: fileSize.toString(),
-                    key: key,
-                    isMultipart: false,  // 文本文件较小，单分片上传
-                    uploadId: uploadId,
-                    StorageNode: storageNode
+                    fileId: fileId, bucket: bucket, fileSize: fileSize.toString(), key: key, isMultipart: false,  // 文本文件较小，单分片上传
+                    uploadId: uploadId, StorageNode: storageNode
                 }));
 
                 console.log('[123FASTLINK] [文本上传]', '完成上传响应:', data);
@@ -450,12 +525,7 @@
                 // 4. 第一步：上传请求
                 console.log('[123FASTLINK] [文本上传]', '步骤1: 上传请求');
                 const [requestSuccess, requestError, uploadData] = await this.uploadRequest({
-                    driveId: 0,
-                    etag: md5,
-                    fileName: fileName,
-                    parentFileId: parentFileId,
-                    size: fileSize,
-                    type: 0,  // 0表示文件，1表示文件夹
+                    driveId: 0, etag: md5, fileName: fileName, parentFileId: parentFileId, size: fileSize, type: 0,  // 0表示文件，1表示文件夹
                     duplicate: 1,  // 1表示覆盖同名文件
                     event: "homeUploadFile",  // 添加事件类型
                     operateType: 1
@@ -470,24 +540,14 @@
                 // 5. 检查是否秒传
                 if (uploadData.Reuse) {
                     console.log('[123FASTLINK] [文本上传]', '秒传成功，文件ID:', uploadData.FileId);
-                    return [true,
-                        "秒传成功",
-                        uploadData.FileId,
-                        {
-                            etag: md5,
-                            fileName: fileName,
-                            size: fileSize
-                        }];
+                    return [true, "秒传成功", uploadData.FileId, {
+                        etag: md5, fileName: fileName, size: fileSize
+                    }];
                 }
 
                 // 6. 第二步：获取上传凭证
                 console.log('[123FASTLINK] [文本上传]', '步骤2: 获取上传凭证');
-                const [authSuccess, authError, presignedUrl] = await this.getUploadAuth(
-                    uploadData.Bucket,
-                    uploadData.Key,
-                    uploadData.UploadId,
-                    uploadData.StorageNode
-                );
+                const [authSuccess, authError, presignedUrl] = await this.getUploadAuth(uploadData.Bucket, uploadData.Key, uploadData.UploadId, uploadData.StorageNode);
 
                 if (!authSuccess) {
                     return [false, '获取上传凭证失败: ' + authError, null];
@@ -507,27 +567,16 @@
 
                 // 8. 第四步：完成上传
                 console.log('[123FASTLINK] [文本上传]', '步骤4: 完成上传');
-                const [completeSuccess, completeError, completeData] = await this.completeUpload(
-                    uploadData.FileId,
-                    uploadData.Bucket,
-                    fileSize,
-                    uploadData.Key,
-                    uploadData.UploadId,
-                    uploadData.StorageNode
-                );
+                const [completeSuccess, completeError, completeData] = await this.completeUpload(uploadData.FileId, uploadData.Bucket, fileSize, uploadData.Key, uploadData.UploadId, uploadData.StorageNode);
 
                 if (!completeSuccess) {
                     return [false, '完成上传失败: ' + completeError, null];
                 }
 
                 console.log('[123FASTLINK] [文本上传]', '上传完成，文件ID:', uploadData.FileId);
-                return [true, "上传完成", uploadData.FileId,
-                    {
-                        etag: md5,
-                        fileName: fileName,
-                        size: fileSize
-                    }
-                ];
+                return [true, "上传完成", uploadData.FileId, {
+                    etag: md5, fileName: fileName, size: fileSize
+                }];
 
             } catch (error) {
                 console.error('[123FASTLINK] [文本上传]', '文本上传流程失败:', error);
@@ -558,15 +607,15 @@
         }
 
         /**
-     * 第一步：获取下载调度列表
-     * @param {Object} fileInfo - 文件信息
-     * @param {string} fileInfo.etag - 文件MD5
-     * @param {string|number} fileInfo.fileId - 文件ID
-     * @param {string} fileInfo.s3keyFlag - S3 Key标志
-     * @param {string} fileInfo.fileName - 文件名
-     * @param {string|number} fileInfo.size - 文件大小
-     * @returns {Promise<Array>} [是否成功, 错误信息, 调度数据]
-     */
+         * 第一步：获取下载调度列表
+         * @param {Object} fileInfo - 文件信息
+         * @param {string} fileInfo.etag - 文件MD5
+         * @param {string|number} fileInfo.fileId - 文件ID
+         * @param {string} fileInfo.s3keyFlag - S3 Key标志
+         * @param {string} fileInfo.fileName - 文件名
+         * @param {string|number} fileInfo.size - 文件大小
+         * @returns {Promise<Array>} [是否成功, 错误信息, 调度数据]
+         */
         async getDispatchList(fileInfo) {
             try {
                 console.log('[123FASTLINK] [下载API]', '获取下载调度列表，文件:', fileInfo.fileName);
@@ -618,7 +667,7 @@
                     return [false, dispatchError, null];
                 }
 
-                const { dispatchList, downloadPath } = dispatchData;
+                const {dispatchList, downloadPath} = dispatchData;
 
                 if (!dispatchList || dispatchList.length === 0) {
                     return [false, '没有可用的下载线路', null];
@@ -646,12 +695,8 @@
 
                 // 3. 拼接完整的下载链接
                 // 确保前缀不以斜杠结尾，路径以斜杠开头
-                const cleanPrefix = selectedDispatch.prefix.endsWith('/')
-                    ? selectedDispatch.prefix.slice(0, -1)
-                    : selectedDispatch.prefix;
-                const cleanPath = downloadPath.startsWith('/')
-                    ? downloadPath
-                    : '/' + downloadPath;
+                const cleanPrefix = selectedDispatch.prefix.endsWith('/') ? selectedDispatch.prefix.slice(0, -1) : selectedDispatch.prefix;
+                const cleanPath = downloadPath.startsWith('/') ? downloadPath : '/' + downloadPath;
 
                 const downloadLink = `${cleanPrefix}${cleanPath}`;
 
@@ -683,8 +728,7 @@
          */
         async getLinkTextContent(downloadLink, options = {}) {
             const {
-                timeout = 30000,
-                includeHeaders = false
+                timeout = 30000, includeHeaders = false
             } = options;
 
             try {
@@ -696,9 +740,7 @@
 
                 try {
                     const response = await fetch(downloadLink, {
-                        method: 'GET',
-                        signal: controller.signal,
-                        headers: {
+                        method: 'GET', signal: controller.signal, headers: {
                             'Accept': 'text/plain,text/html,application/json,*/*',
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                         }
@@ -782,7 +824,7 @@
                     return [false, '获取下载链接失败: ' + linkError, null];
                 }
 
-                const { downloadLink } = linkData;
+                const {downloadLink} = linkData;
 
                 // 2. 获取文本内容
                 console.log('[123FASTLINK] [下载API]', '步骤2: 获取文本内容');
@@ -864,12 +906,11 @@
                     return [false, linkError, null];
                 }
 
-                const { downloadLink } = linkData;
+                const {downloadLink} = linkData;
 
                 // 2. 下载为Blob
                 const response = await fetch(downloadLink, {
-                    method: 'GET',
-                    headers: {
+                    method: 'GET', headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     }
                 });
@@ -926,10 +967,8 @@
                 }
                 const observer = new MutationObserver(() => {
                     if (element.classList.contains('ant-checkbox-input')) {
-                        if (
-                            // 检查是否为全选框并绑定事件
-                            element.getAttribute('aria-label') === 'Select all'
-                        ) {
+                        if (// 检查是否为全选框并绑定事件
+                            element.getAttribute('aria-label') === 'Select all') {
                             // 新建全选框，新页面，清除已选择
                             self.unselectedRowKeys = [];
                             self.selectedRowKeys = [];
@@ -973,8 +1012,7 @@
                     observer.disconnect();
                 });
                 observer.observe(element, {
-                    attributes: true,
-                    attributeFilter: ['class', 'aria-label']
+                    attributes: true, attributeFilter: ['class', 'aria-label']
                 });
                 return element;
             };
@@ -1293,7 +1331,7 @@
         }
 
         /**
-         * 拼接链接 etag: 来自服务器md5，由函数转换格式 
+         * 拼接链接 etag: 来自服务器md5，由函数转换格式
          * @param {*} fileInfoList - {etag: string, size: number, path: string, fileName: string}
          */
         buildShareLink(fileInfoList, commonPath, jsonExport = false) {
@@ -1395,7 +1433,7 @@
 
         /**
          * 自动判断秒传链接格式并解析
-         * @param {string} shareLink 
+         * @param {string} shareLink
          */
         async parseShareLink(shareLink) {
             let result = null;
@@ -1530,12 +1568,12 @@
 
         /**
          *  保存秒传链接（自动判断格式）
-         * @param {string} content 
+         * @param {string} content
          * @returns {Promise<object>} - 保存结果
          * {success: [], failed: []}
          */
         async saveShareLink(content) {
-            let saveResult = { success: [], failed: [] };
+            let saveResult = {success: [], failed: []};
 
             const fileInfoList = await this.parseShareLink(content);
             if (!fileInfoList[0]) {
@@ -1566,7 +1604,7 @@
         // ------------------二级秒传链接相关----------------------
         /**
          * 获取文件内容为文本
-         * @param {string} fileId 
+         * @param {string} fileId
          * @returns [boolean, string, string] - 是否成功, 错误信息, 文本内容
          */
         async getFileContentAsText(fileId) {
@@ -1580,7 +1618,7 @@
         /**
          * 从文本文件获取并保存秒传链接
          * @param {string} fileId - 二级秒传链接文件ID
-         * @returns 
+         * @returns
          */
         async saveShareLinkFile(fileId) {
             const [downloadSuccess, downloadError, fileContent] = await this.getFileContentAsText(fileId);
@@ -1608,9 +1646,10 @@
             this.progress = 10;
             this.progressDesc = "正在保存二级秒传链接文件...";
             const saveResult = await this.apiClient.getFile({
-                etag: secondaryFileInfo[0].etag, size: secondaryFileInfo[0].size, fileName: secondaryFileInfo[0].fileName
-            }
-                , seedFilePathId);
+                etag: secondaryFileInfo[0].etag,
+                size: secondaryFileInfo[0].size,
+                fileName: secondaryFileInfo[0].fileName
+            }, seedFilePathId);
             if (!saveResult[0]) {
                 return [false, '保存二级秒传链接文件失败: ' + saveResult[1], null];
             }
@@ -1628,10 +1667,10 @@
         }
 
         /**
-         * 
+         *
          * @param {dict} fileSelectionDetails - 文件选择
          * @param {*} fileName - 二级秒传链接文件名
-         * @returns 
+         * @returns
          */
         async generateSecondaryShareLink(fileSelectionDetails, fileName, seedFilePathId = null) {
             if (seedFilePathId && seedFilePathId.toString().length !== 8) {
@@ -1730,10 +1769,7 @@
                         if (!this._isValidEtag(file.etag)) {
                             console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', file.etag);
                             failedList.push({
-                                etag: file.etag,
-                                size: file.size,
-                                path: file.path,
-                                fileName: file.path.split('/').pop()
+                                etag: file.etag, size: file.size, path: file.path, fileName: file.path.split('/').pop()
                             });
                         }
                     });
@@ -1798,20 +1834,17 @@
                 totalFilesCount: fileInfoList.length,
                 totalSize,
                 formattedTotalSize: this._formatSize(totalSize),
-                files: fileInfoList.map(
-                    f => ({
-                        // 去掉fileName
-                        ...f, fileName: undefined,
-                        etag: usesBase62EtagsInExport ? this._hexToBase62(f.etag) : f.etag
-                    })
-                )
+                files: fileInfoList.map(f => ({
+                    // 去掉fileName
+                    ...f, fileName: undefined, etag: usesBase62EtagsInExport ? this._hexToBase62(f.etag) : f.etag
+                }))
             };
             return [true, null, JSON.stringify(jsonData, null, 2)];
         }
 
         /**
          * 从JSON格式生成文本秒传链接
-         * @param {string} jsonText 
+         * @param {string} jsonText
          * @returns    {boolean, string, string} - 是否成功, 错误信息, 秒传链接
          */
         jsonToTextShareLink(jsonText) {
@@ -1826,12 +1859,13 @@
             }
             return this.buildShareLink(filePath, etag, false);
         }
-        // -------------------工具函数----------------------- 
+
+        // -------------------工具函数-----------------------
         /**
          * 获取导出文件名，默认根据公共路径或第一个文件名生成，不带扩展名
-         * @param {string} shareLink(text) 
-         * @param {string} defaultName 
-         * @returns 
+         * @param {string} shareLink(text)
+         * @param {string} defaultName
+         * @returns
          */
         async getExportFilename(shareLink, defaultName = this.defaultExportName) {
             const [success, , fileInfoList, , commonPath] = await this.parseShareLink(shareLink);
@@ -1873,39 +1907,90 @@
             this.shareLinkManager = shareLinkManager;
             this.selector = selector;
             this.isProgressMinimized = false;
-            this.minimizeWidgetId = 'progress-minimize-widget';
-            this.settings = [
-                { key: "scriptVersion", label: "脚本版本", type: "text", value: this.shareLinkManager.scriptVersion, readonly: true },
-                { key: "COMMON_PATH_LINK_PREFIX_V2", label: "公共路径链接前缀", type: "text", value: this.shareLinkManager.COMMON_PATH_LINK_PREFIX_V2, readonly: true },
-                { key: "DEFAULT_EXPORT_FILENAME", label: "默认导出文件名", type: "text", value: this.shareLinkManager.defaultExportName, description: "当无法从公共路径或文件名生成时使用此默认名称" },
-                { key: "seedFilePathId", label: "秒传文件保存文件夹ID", type: "number", value: GlobalConfig.seedFilePathId, description: "用于保存二级秒传链接文件的文件夹ID，留空则使用当前文件夹" },
-                { key: "usesBase62EtagsInExport", label: "Base62编码", type: "checkbox", value: GlobalConfig.usesBase62EtagsInExport, description: "Base62编码的etag可以减少链接长度，但不兼容旧版本脚本" },
-                { key: "secondaryLinkUseJson", label: "二级秒传链接使用JSON格式", type: "checkbox", value: GlobalConfig.secondaryLinkUseJson, description: "启用后生成二级秒传链接时秒传文件将采用JSON格式" },
-                { key: "getFileListPageDelay", label: "获取文件列表每页延时 (毫秒)", type: "number", value: GlobalConfig.getFileListPageDelay },
-                { key: "getFileInfoBatchSize", label: "批量获取文件信息的数量", type: "number", value: GlobalConfig.getFileInfoBatchSize },
-                { key: "getFileInfoDelay", label: "获取文件信息延时 (毫秒)", type: "number", value: GlobalConfig.getFileInfoDelay },
-                { key: "getFolderInfoDelay", label: "获取文件夹信息延时 (毫秒)", type: "number", value: GlobalConfig.getFolderInfoDelay },
-                { key: "saveLinkDelay", label: "保存链接延时 (毫秒)", type: "number", value: GlobalConfig.saveLinkDelay },
-                { key: "mkdirDelay", label: "创建文件夹延时 (毫秒)", type: "number", value: GlobalConfig.mkdirDelay },
-                { key: "maxTextFileSize", label: "文本文件最大大小 (字节)", type: "number", value: GlobalConfig.MAX_TEXT_FILE_SIZE },
-                { key: "DEBUGMODE", label: "调试模式", type: "checkbox", value: GlobalConfig.DEBUGMODE, description: "启用调试模式，页面刷新后生效" }
-            ];
+            this.minimizeWidgetId = 'fs-progress-minimize-widget';
+            this.settings = [{
+                key: "scriptVersion",
+                label: "脚本版本",
+                type: "text",
+                value: this.shareLinkManager.scriptVersion,
+                readonly: true
+            }, {
+                key: "COMMON_PATH_LINK_PREFIX_V2",
+                label: "公共路径链接前缀",
+                type: "text",
+                value: this.shareLinkManager.COMMON_PATH_LINK_PREFIX_V2,
+                readonly: true
+            }, {
+                key: "DEFAULT_EXPORT_FILENAME",
+                label: "默认导出文件名",
+                type: "text",
+                value: this.shareLinkManager.defaultExportName,
+                description: "当无法从公共路径或文件名生成时使用此默认名称"
+            }, {
+                key: "seedFilePathId",
+                label: "秒传文件保存文件夹ID",
+                type: "number",
+                value: GlobalConfig.seedFilePathId,
+                description: "用于保存二级秒传链接文件的文件夹ID，留空则使用当前文件夹"
+            }, {
+                key: "usesBase62EtagsInExport",
+                label: "Base62编码",
+                type: "checkbox",
+                value: GlobalConfig.usesBase62EtagsInExport,
+                description: "Base62编码的etag可以减少链接长度，但不兼容旧版本脚本"
+            }, {
+                key: "secondaryLinkUseJson",
+                label: "二级秒传链接使用JSON格式",
+                type: "checkbox",
+                value: GlobalConfig.secondaryLinkUseJson,
+                description: "启用后生成二级秒传链接时秒传文件将采用JSON格式"
+            }, {
+                key: "getFileListPageDelay",
+                label: "获取文件列表每页延时 (毫秒)",
+                type: "number",
+                value: GlobalConfig.getFileListPageDelay
+            }, {
+                key: "getFileInfoBatchSize",
+                label: "批量获取文件信息的数量",
+                type: "number",
+                value: GlobalConfig.getFileInfoBatchSize
+            }, {
+                key: "getFileInfoDelay",
+                label: "获取文件信息延时 (毫秒)",
+                type: "number",
+                value: GlobalConfig.getFileInfoDelay
+            }, {
+                key: "getFolderInfoDelay",
+                label: "获取文件夹信息延时 (毫秒)",
+                type: "number",
+                value: GlobalConfig.getFolderInfoDelay
+            }, {
+                key: "saveLinkDelay", label: "保存链接延时 (毫秒)", type: "number", value: GlobalConfig.saveLinkDelay
+            }, {key: "mkdirDelay", label: "创建文件夹延时 (毫秒)", type: "number", value: GlobalConfig.mkdirDelay}, {
+                key: "maxTextFileSize",
+                label: "文本文件最大大小 (字节)",
+                type: "number",
+                value: GlobalConfig.MAX_TEXT_FILE_SIZE
+            }, {
+                key: "DEBUGMODE",
+                label: "调试模式",
+                type: "checkbox",
+                value: GlobalConfig.DEBUGMODE,
+                description: "启用调试模式，页面刷新后生效"
+            }];
 
             this.iconLibrary = {
                 transfer: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="16 18 22 12 16 6"></polyline>
                             <polyline points="8 6 2 12 8 18"></polyline>
-                        </svg>`,
-                generate: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        </svg>`, generate: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                             <polyline points="13 2 13 9 20 9"></polyline>
-                        </svg>`,
-                save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        </svg>`, save: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                             <polyline points="17 21 17 13 7 13 7 21"></polyline>
                             <polyline points="7 3 7 8 15 8"></polyline>
-                        </svg>`,
-                generateSecondary: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        </svg>`, generateSecondary: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                     </svg>`,
@@ -1914,14 +1999,12 @@
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>`,
-                getFromFile: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                </svg>`, getFromFile: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                     <polyline points="13 2 13 9 20 9"></polyline>
                     <line x1="12" y1="15" x2="12" y2="9"></line>
                     <polyline points="9 12 12 9 15 12"></polyline>
-                </svg>`,
-                settings: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                </svg>`, settings: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"></circle>
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                 </svg>`
@@ -1943,91 +2026,66 @@
                             this.showToast("请先选择文件", 'warning');
                             return null;
                         }
-                        return { type: 'generate', params: { fileSelectInfo } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'generate', params: {fileSelectInfo}};
+                    }, handler: async function (task) {
                         await this.launchGenerateModal(task.params.fileSelectInfo);
-                    },
-                    description: '生成秒传链接'
-                },
-                'generateSecondary': {
+                    }, description: '生成秒传链接'
+                }, 'generateSecondary': {
                     addTask: function (params = {}) {
                         const fileSelectInfo = this.selector.getSelection();
                         if (!fileSelectInfo || fileSelectInfo.length === 0) {
                             this.showToast("请先选择文件", 'warning');
                             return null;
                         }
-                        return { type: 'generateSecondary', params: { fileSelectInfo } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'generateSecondary', params: {fileSelectInfo}};
+                    }, handler: async function (task) {
                         await this.launchSecondaryGenerateModal(task.params.fileSelectInfo);
-                    },
-                    description: '生成二级秒传链接'
-                },
-                'save': {
+                    }, description: '生成二级秒传链接'
+                }, 'save': {
                     addTask: function (params = {}) {
-                        return { type: 'save', params: { content: params.content } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'save', params: {content: params.content}};
+                    }, handler: async function (task) {
                         await this.launchSaveLink(task.params.content);
-                    },
-                    description: '保存秒传链接'
-                },
-                'retry': {
+                    }, description: '保存秒传链接'
+                }, 'retry': {
                     addTask: function (params = {}) {
-                        return { type: 'retry', params: { fileList: params.fileList } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'retry', params: {fileList: params.fileList}};
+                    }, handler: async function (task) {
                         await this.launchSaveLink(task.params.fileList, true);
-                    },
-                    description: '重试保存失败的文件'
-                },
-                'saveOnlyLink': {
+                    }, description: '重试保存失败的文件'
+                }, 'saveOnlyLink': {
                     addTask: function (params = {}) {
                         return {
-                            type: 'saveOnlyLink',
-                            params: {
-                                content: params.content,
-                                fileName: params.fileName || '123FastLink.123share'
+                            type: 'saveOnlyLink', params: {
+                                content: params.content, fileName: params.fileName || '123FastLink.123share'
                             }
                         };
-                    },
-                    handler: async function (task) {
+                    }, handler: async function (task) {
                         await this.launchSaveLinkOnlyText(task.params.content, task.params.fileName);
-                    },
-                    description: '保存为文本文件'
-                },
-                'saveSecondary': {
+                    }, description: '保存为文本文件'
+                }, 'saveSecondary': {
                     addTask: function (params = {}) {
-                        return { type: 'saveSecondary', params: { content: params.content } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'saveSecondary', params: {content: params.content}};
+                    }, handler: async function (task) {
                         await this.launchSaveSecondaryLink(task.params.content);
-                    },
-                    description: '保存二级秒传链接'
-                },
-                'convert': {
+                    }, description: '保存二级秒传链接'
+                }, 'convert': {
                     addTask: function (params = {}) {
-                        return { type: 'convert', params: { content: params.content } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'convert', params: {content: params.content}};
+                    }, handler: async function (task) {
                         await this.launchConvert(task.params.content);
-                    },
-                    description: '转换链接格式'
-                },
-                'saveFromFile': {
+                    }, description: '转换链接格式'
+                }, 'saveFromFile': {
                     addTask: function (params = {}) {
                         const fileSelectInfo = this.selector.getSelection();
                         if (!fileSelectInfo || fileSelectInfo.length === 0) {
                             this.showToast("请先选择文件", 'warning');
                             return null;
                         }
-                        return { type: 'saveFromFile', params: { fileSelectInfo } };
-                    },
-                    handler: async function (task) {
+                        return {type: 'saveFromFile', params: {fileSelectInfo}};
+                    }, handler: async function (task) {
                         await this.launchSaveFromFile(task.params.fileSelectInfo);
-                    },
-                    description: '从秒传文件获取并保存'
+                    }, description: '从秒传文件获取并保存'
                 }
             };
 
@@ -2046,58 +2104,36 @@
             // 按钮插入 ==========================================
             // todo: 二级链接转换
             // 定义功能按钮
-            const features = [
-                {
-                    iconKey: 'generate',
-                    text: '生成秒传链接',
-                    handler: () => this.addAndRunTask('generate')
-                },
-                {
-                    iconKey: 'save',
-                    text: '保存秒传链接',
-                    handler: () => this.showInputModal()
-                },
-                {
-                    iconKey: 'generateSecondary',
-                    text: '生成二级链接',
-                    handler: () => this.addAndRunTask('generateSecondary')
-                },
-                {
-                    iconKey: 'saveSecondary',
-                    text: '保存二级链接',
-                    handler: () => this.showInputModal("saveSecondary", false, '保存二级链接')
-                },
-                {
-                    iconKey: 'transfer',
-                    text: '转换链接格式',
-                    handler: () => this.showInputModal("convert", false, '确定')
-                },
-                {
-                    iconKey: 'getFromFile',
-                    text: '从秒传文件获取',
-                    handler: () => this.addAndRunTask('saveFromFile')
-                },
-                {
-                    iconKey: 'settings',
-                    text: '设置',
-                    handler: () => this.showSettingsModal()
-                }
-            ];
+            const features = [{
+                iconKey: 'generate', text: '生成秒传链接', handler: () => this.addAndRunTask('generate')
+            }, {
+                iconKey: 'save', text: '保存秒传链接', handler: () => this.showInputModal()
+            }, {
+                iconKey: 'generateSecondary',
+                text: '生成二级链接',
+                handler: () => this.addAndRunTask('generateSecondary')
+            }, {
+                iconKey: 'saveSecondary',
+                text: '保存二级链接',
+                handler: () => this.showInputModal("saveSecondary", false, '保存二级链接')
+            }, {
+                iconKey: 'transfer', text: '转换链接格式', handler: () => this.showInputModal("convert", false, '确定')
+            }, {
+                iconKey: 'getFromFile', text: '从秒传文件获取', handler: () => this.addAndRunTask('saveFromFile')
+            }, {
+                iconKey: 'settings', text: '设置', handler: () => this.showSettingsModal()
+            }];
 
             // 页面加载完成后插入样式表和添加按钮
             window.addEventListener('load', () => {
                 this.insertStyle();
-                this.addButton(
-                    features
-                );
+                this.addButton(features);
             });
 
             // 监听URL变化，重新添加按钮，防止切换页面后按钮消失 =======
 
             const triggerUrlChange = () => {
-                setTimeout(() => this.addButton(
-                    features
-                ), 10);
+                setTimeout(() => this.addButton(features), 10);
             };
 
             const originalPushState = history.pushState;
@@ -2144,107 +2180,107 @@
          * 插入样式表
          */
         insertStyle() {
-            if (!document.getElementById("modal-style")) {
+            if (!document.getElementById("fs-modal-style")) {
                 let style = document.createElement("style");
-                style.id = "modal-style";
+                style.id = "fs-modal-style";
                 style.innerHTML = `
                 :root{--primary-color:#6366f1;--primary-hover:#4f46e5;--secondary-color:#10b981;--secondary-hover:#059669;--danger-color:#ef4444;--danger-hover:#dc2626;--warning-color:#f59e0b;--warning-hover:#d97706;--info-color:#3b82f6;--info-hover:#2563eb;--background:#ffffff;--surface:#f8fafc;--border:#e2e8f0;--text-primary:#1e293b;--text-secondary:#64748b;--text-tertiary:#94a3b8;--shadow-sm:0 1px 2px 0 rgba(0,0,0,0.05);--shadow:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -1px rgba(0,0,0,0.06);--shadow-lg:0 10px 15px -3px rgba(0,0,0,0.1),0 4px 6px -2px rgba(0,0,0,0.05);--shadow-xl:0 20px 25px -5px rgba(0,0,0,0.1),0 10px 10px -5px rgba(0,0,0,0.04);--radius-sm:6px;--radius:12px;--radius-lg:16px;--transition:all 0.2s cubic-bezier(0.4,0,0.2,1)}
-                .modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.2s ease-out}
+                .fs-modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.2s ease-out}
                 .modal{background:var(--background);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);width:90%;max-width:500px;max-height:90vh;overflow:hidden;border:1px solid var(--border);transform:translateY(0);animation:slideUp 0.3s cubic-bezier(0.4,0,0.2,1)}
-                .modal-header{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
-                .modal-title{font-size:20px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}
-                .modal-title svg{width:20px;height:20px}
-                .modal-close{background:none;border:none;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;transition:var(--transition)}
-                .modal-close:hover{background:var(--surface);color:var(--text-primary)}
-                .modal-content{padding:24px}
-                .modal-footer{padding:16px 24px 24px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end}
-                .file-input{display:none}
-                .file-list-container{background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:20px;max-height:200px;overflow-y:auto}
-                .file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-                .file-count{font-size:13px;color:var(--text-secondary);font-weight:500}
-                .file-list{display:flex;flex-direction:column;gap:8px}
-                .file-item{font-size:13px;color:var(--text-primary);padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);word-break:break-all;line-height:1.4}
+                .fs-modal-header{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+                .fs-modal-title{font-size:20px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}
+                .fs-modal-title svg{width:20px;height:20px}
+                .fs-modal-close{background:none;border:none;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;transition:var(--transition)}
+                .fs-modal-close:hover{background:var(--surface);color:var(--text-primary)}
+                .fs-modal-content{padding:24px}
+                .fs-modal-footer{padding:16px 24px 24px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end}
+                .fs-file-input{display:none}
+                .fs-file-list-container{background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:20px;max-height:200px;overflow-y:auto}
+                .fs-file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+                .fs-file-count{font-size:13px;color:var(--text-secondary);font-weight:500}
+                .fs-file-list{display:flex;flex-direction:column;gap:8px}
+                .fs-file-item{font-size:13px;color:var(--text-primary);padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);word-break:break-all;line-height:1.4}
                 .modal textarea{width:100%;min-height:120px;padding:16px;border:2px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text-primary);font-family:'JetBrains Mono','Consolas','Monaco',monospace;font-size:13px;line-height:1.5;resize:vertical;transition:var(--transition);box-sizing:border-box}
                 .modal textarea:focus{outline:none;border-color:var(--primary-color);box-shadow:0 0 0 3px rgba(99,102,241,0.1)}
                 .modal textarea.drag-over{border-color:var(--primary-color);background:rgba(99,102,241,0.05)}
                 .button-group{display:flex;gap:12px;align-items:center}
                 .btn{padding:10px 20px;border-radius:var(--radius);font-size:14px;font-weight:500;border:none;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:100px}
                 .btn:disabled{opacity:0.5;cursor:not-allowed}
-                .btn-primary{background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;box-shadow:var(--shadow)}
-                .btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}
-                .btn-secondary{background:linear-gradient(135deg,var(--secondary-color),var(--secondary-hover));color:white;box-shadow:var(--shadow)}
-                .btn-secondary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}
-                .btn-outline{background:white;color:var(--text-primary);border:1px solid var(--border)}
-                .btn-outline:hover:not(:disabled){background:var(--surface);border-color:var(--text-secondary)}
-                .btn-danger{background:var(--danger-color);color:white}
-                .btn-danger:hover:not(:disabled){background:var(--danger-hover)}
+                .fs-btn-primary{background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;box-shadow:var(--shadow)}
+                .fs-btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+                .fs-btn-secondary{background:linear-gradient(135deg,var(--secondary-color),var(--secondary-hover));color:white;box-shadow:var(--shadow)}
+                .fs-btn-secondary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+                .fs-btn-outline{background:white;color:var(--text-primary);border:1px solid var(--border)}
+                .fs-btn-outline:hover:not(:disabled){background:var(--surface);border-color:var(--text-secondary)}
+                .fs-btn-danger{background:var(--danger-color);color:white}
+                .fs-btn-danger:hover:not(:disabled){background:var(--danger-hover)}
                 .dropdown{position:relative}
-                .dropdown-toggle{display:inline-flex;align-items:center;gap:4px}
-                .dropdown-menu{position:absolute;bottom:100%;left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:140px;z-index:1001;margin-bottom:8px;opacity:0;transform:translateY(10px);visibility:hidden;transition:var(--transition)}
-                .dropdown:hover .dropdown-menu{opacity:1;transform:translateY(0);visibility:visible}
-                .dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
-                .dropdown-item:hover{background:var(--surface)}
-                .dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
-                .dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}
-                .dropdown-divider{height:1px;background:var(--border);margin:4px 0}
+                .fs-dropdown-toggle{display:inline-flex;align-items:center;gap:4px}
+                .fs-dropdown-menu{position:absolute;bottom:100%;left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:140px;z-index:1001;margin-bottom:8px;opacity:0;transform:translateY(10px);visibility:hidden;transition:var(--transition)}
+                .dropdown:hover .fs-dropdown-menu{opacity:1;transform:translateY(0);visibility:visible}
+                .fs-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
+                .fs-dropdown-item:hover{background:var(--surface)}
+                .fs-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
+                .fs-dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}
+                .fs-dropdown-divider{height:1px;background:var(--border);margin:4px 0}
                 .toast{position:fixed;top:24px;right:24px;background:white;color:var(--text-primary);padding:12px 20px;border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:10002;font-size:14px;max-width:320px;animation:slideInRight 0.3s cubic-bezier(0.4,0,0.2,1);border-left:4px solid var(--info-color);display:flex;align-items:center;gap:12px}
                 .toast.success{border-left-color:var(--secondary-color)}
                 .toast.error{border-left-color:var(--danger-color)}
                 .toast.warning{border-left-color:var(--warning-color)}
                 .toast.info{border-left-color:var(--info-color)}
                 .toast-icon{width:20px;height:20px}
-                .progress-modal{animation:modalSlideIn 0.3s cubic-bezier(0.4,0,0.2,1)}
-                .progress-content{padding:24px;text-align:center}
-                .progress-title{font-size:18px;font-weight:600;color:var(--text-primary);margin-bottom:20px;word-break:break-all;line-height:1.4}
-                .progress-bar-container{height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin-bottom:12px}
-                .progress-bar{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:4px;transition:width 0.3s ease}
-                .progress-info{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-                .progress-percent{font-size:16px;font-weight:600;color:var(--primary-color)}
-                .progress-desc{font-size:13px;color:var(--text-secondary);text-align:left;background:var(--surface);padding:12px;border-radius:var(--radius);margin-top:16px;word-break:break-all;line-height:1.4}
-                .progress-minimize-btn{position:absolute;top:16px;right:16px;width:32px;height:32px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
-                .progress-minimize-btn:hover{background:var(--border);color:var(--text-primary)}
+                .fs-progress-modal{animation:modalSlideIn 0.3s cubic-bezier(0.4,0,0.2,1)}
+                .fs-progress-content{padding:24px;text-align:center}
+                .fs-progress-title{font-size:18px;font-weight:600;color:var(--text-primary);margin-bottom:20px;word-break:break-all;line-height:1.4}
+                .fs-progress-bar-container{height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin-bottom:12px}
+                .fs-progress-bar{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:4px;transition:width 0.3s ease}
+                .fs-progress-info{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+                .fs-progress-percent{font-size:16px;font-weight:600;color:var(--primary-color)}
+                .fs-progress-desc{font-size:13px;color:var(--text-secondary);text-align:left;background:var(--surface);padding:12px;border-radius:var(--radius);margin-top:16px;word-break:break-all;line-height:1.4}
+                .fs-progress-minimize-btn{position:absolute;top:16px;right:16px;width:32px;height:32px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
+                .fs-progress-minimize-btn:hover{background:var(--border);color:var(--text-primary)}
                 .minimized-widget{position:fixed;right:24px;bottom:24px;background:white;border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:12px 16px;z-index:10005;min-width:240px;cursor:pointer;transition:var(--transition);border:1px solid var(--border)}
                 .minimized-widget:hover{transform:translateY(-2px);box-shadow:var(--shadow-xl)}
-                .widget-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-                .widget-title{font-size:12px;font-weight:500;color:var(--text-primary)}
-                .widget-badge{background:var(--danger-color);color:white;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px}
-                .widget-progress{display:flex;align-items:center;gap:12px}
-                .widget-bar{flex:1;height:4px;background:var(--surface);border-radius:2px;overflow:hidden}
-                .widget-fill{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:2px}
-                .widget-percent{font-size:12px;font-weight:600;color:var(--primary-color);min-width:40px}
-                .task-list-container{margin-top:20px}
-                .task-toggle{width:100%;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-secondary);font-size:13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:var(--transition)}
-                .task-toggle:hover{background:#f1f5f9}
-                .task-toggle.active{background:var(--primary-color);color:white;border-color:var(--primary-color)}
-                .task-list{max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);background:white;display:none}
-                .task-list.show{display:block}
-                .task-item{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:var(--transition)}
-                .task-item:last-child{border-bottom:none}
-                .task-item.current{background:rgba(99,102,241,0.05)}
-                .task-info{display:flex;align-items:center;gap:8px}
-                .task-icon{width:12px;height:12px;border-radius:50%}
-                .task-icon.generate{background:var(--secondary-color)}
-                .task-icon.save{background:var(--info-color)}
-                .task-icon.retry{background:var(--warning-color)}
-                .task-name{font-size:13px;color:var(--text-primary)}
-                .task-status{font-size:12px;color:var(--text-secondary)}
-                .task-remove{width:24px;height:24px;border-radius:50%;border:none;background:var(--surface);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
-                .task-remove:hover{background:var(--danger-color);color:white}
-                .task-remove:disabled{opacity:0.5;cursor:not-allowed}
-                .results-content{text-align:left}
-                .results-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-                .stat-card{padding:16px;border-radius:var(--radius);text-align:center}
-                .stat-card.success{background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2)}
-                .stat-card.failed{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2)}
-                .stat-value{font-size:24px;font-weight:700;margin-bottom:4px}
-                .stat-value.success{color:var(--secondary-color)}
-                .stat-value.failed{color:var(--danger-color)}
-                .stat-label{font-size:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px}
-                .failed-list{max-height:200px;overflow-y:auto;background:var(--surface);border-radius:var(--radius);padding:12px}
-                .failed-item{padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:8px;font-size:12px}
-                .failed-item:last-child{margin-bottom:0}
-                .failed-name{color:var(--text-primary);word-break:break-all}
-                .failed-error{color:var(--danger-color);font-size:11px;margin-top:4px}
+                .fs-widget-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+                .fs-widget-title{font-size:12px;font-weight:500;color:var(--text-primary)}
+                .fs-widget-badge{background:var(--danger-color);color:white;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px}
+                .fs-widget-progress{display:flex;align-items:center;gap:12px}
+                .fs-widget-bar{flex:1;height:4px;background:var(--surface);border-radius:2px;overflow:hidden}
+                .fs-widget-fill{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:2px}
+                .fs-widget-percent{font-size:12px;font-weight:600;color:var(--primary-color);min-width:40px}
+                .fs-task-list-container{margin-top:20px}
+                .fs-task-toggle{width:100%;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-secondary);font-size:13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:var(--transition)}
+                .fs-task-toggle:hover{background:#f1f5f9}
+                .fs-task-toggle.active{background:var(--primary-color);color:white;border-color:var(--primary-color)}
+                .fs-task-list{max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);background:white;display:none}
+                .fs-task-list.show{display:block}
+                .fs-task-item{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:var(--transition)}
+                .fs-task-item:last-child{border-bottom:none}
+                .fs-task-item.current{background:rgba(99,102,241,0.05)}
+                .fs-task-info{display:flex;align-items:center;gap:8px}
+                .fs-task-icon{width:12px;height:12px;border-radius:50%}
+                .fs-task-icon.generate{background:var(--secondary-color)}
+                .fs-task-icon.save{background:var(--info-color)}
+                .fs-task-icon.retry{background:var(--warning-color)}
+                .fs-task-name{font-size:13px;color:var(--text-primary)}
+                .fs-task-status{font-size:12px;color:var(--text-secondary)}
+                .fs-task-remove{width:24px;height:24px;border-radius:50%;border:none;background:var(--surface);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
+                .fs-task-remove:hover{background:var(--danger-color);color:white}
+                .fs-task-remove:disabled{opacity:0.5;cursor:not-allowed}
+                .fs-results-content{text-align:left}
+                .fs-results-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+                .fs-stat-card{padding:16px;border-radius:var(--radius);text-align:center}
+                .fs-stat-card.success{background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2)}
+                .fs-stat-card.failed{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2)}
+                .fs-stat-value{font-size:24px;font-weight:700;margin-bottom:4px}
+                .fs-stat-value.success{color:var(--secondary-color)}
+                .fs-stat-value.failed{color:var(--danger-color)}
+                .fs-stat-label{font-size:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px}
+                .fs-failed-list{max-height:200px;overflow-y:auto;background:var(--surface);border-radius:var(--radius);padding:12px}
+                .fs-failed-item{padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:8px;font-size:12px}
+                .fs-failed-item:last-child{margin-bottom:0}
+                .fs-failed-name{color:var(--text-primary);word-break:break-all}
+                .fs-failed-error{color:var(--danger-color);font-size:11px;margin-top:4px}
                 .fs-mfy-button-container{position:relative;display:inline-block}
                 .fs-mfy-button{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow)}
                 .fs-mfy-button:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg)}
@@ -2271,60 +2307,61 @@
                 设置页面样式
                 ============================================================ */
                 /* 1. 容器与布局 */
-                .settings-container {display: flex;flex-direction: column;gap: 12px;padding: 4px 0;}
+                .fs-settings-container {display: flex;flex-direction: column;gap: 12px;padding: 4px 0;}
                 /* 2. 设置行项目 - 卡片感设计 */
-                .setting-row {display: flex;align-items: center;justify-content: space-between;padding: 16px;background: var(--surface);border-radius: var(--radius);transition: var(--transition);border: 1px solid transparent;}
-                .setting-row:hover {background: #ffffff;border-color: var(--border);box-shadow: var(--shadow-sm);transform: translateY(-1px);}
-                .setting-row.readonly {opacity: 0.6;cursor: not-allowed;}
+                .fs-setting-row {display: flex;align-items: center;justify-content: space-between;padding: 16px;background: var(--surface);border-radius: var(--radius);transition: var(--transition);border: 1px solid transparent;}
+                .fs-setting-row:hover {background: #ffffff;border-color: var(--border);box-shadow: var(--shadow-sm);transform: translateY(-1px);}
+                .fs-setting-row.readonly {opacity: 0.6;cursor: not-allowed;}
                 /* 3. 文本信息区 */
-                .setting-info {display: flex;flex-direction: column;gap: 4px;flex: 1;padding-right: 24px;}
-                .setting-label-text {font-size: 14.5px;font-weight: 600;color: var(--text-primary);letter-spacing: 0.3px;}
-                .setting-describe {font-size: 12.5px;color: var(--text-secondary);line-height: 1.5;}
+                .fs-setting-info {display: flex;flex-direction: column;gap: 4px;flex: 1;padding-right: 24px;}
+                .fs-setting-label-text {font-size: 14.5px;font-weight: 600;color: var(--text-primary);letter-spacing: 0.3px;}
+                .fs-setting-describe {font-size: 12.5px;color: var(--text-secondary);line-height: 1.5;}
                 /* 4. 交互控件区 */
-                .setting-action {display: flex;align-items: center;justify-content: flex-end;min-width: 100px;}
-                /* 5. 现代化 Switch 开关 (iOS 风格) */
-                .settings-switch {position: relative;display: inline-block;width: 44px;height: 24px;}
-                .settings-switch input {opacity: 0;width: 0;height: 0;}
+                .fs-setting-action {display: flex;align-items: center;justify-content: flex-end;min-width: 100px;}
+                /* 5. Switch 开关 */
+                .fs-settings-switch {position: relative;display: inline-block;width: 44px;height: 24px;}
+                .fs-settings-switch input {opacity: 0;width: 0;height: 0;}
                 .switch-slider {position: absolute;cursor: pointer;top: 0; left: 0; right: 0; bottom: 0;background-color: var(--border);transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 24px;}
                 .switch-slider:before {position: absolute;content: "";height: 18px;width: 18px;left: 3px;bottom: 3px;background-color: white;transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 50%;box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
-                .settings-switch input:checked + .switch-slider {background-color: var(--primary-color);}
-                .settings-switch input:focus + .switch-slider {box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);}
-                .settings-switch input:checked + .switch-slider:before {transform: translateX(20px);}
+                .fs-settings-switch input:checked + .switch-slider {background-color: var(--primary-color);}
+                .fs-settings-switch input:focus + .switch-slider {box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);}
+                .fs-settings-switch input:checked + .switch-slider:before {transform: translateX(20px);}
                 /* 6. 分段选择器 (Segmented Radio) */
-                .settings-radio-group {display: flex;background: #eef2f6;padding: 3px;border-radius: 10px;gap: 2px;}
-                .radio-tab {cursor: pointer;position: relative;}
-                .radio-tab input {position: absolute;opacity: 0;}
-                .radio-tab span {display: block;padding: 6px 14px;font-size: 12px;font-weight: 500;border-radius: 7px;color: var(--text-secondary);transition: all 0.2s;}
-                .radio-tab input:checked + span {background: white;color: var(--primary-color);box-shadow: var(--shadow-sm);}
+                .fs-settings-radio-group {display: flex;background: #eef2f6;padding: 3px;border-radius: 10px;gap: 2px;}
+                .fs-reset-tab {cursor: pointer;position: relative;}
+                .fs-reset-tab input {position: absolute;opacity: 0;}
+                .fs-reset-tab span {display: block;padding: 6px 14px;font-size: 12px;font-weight: 500;border-radius: 7px;color: var(--text-secondary);transition: all 0.2s;}
+                .fs-reset-tab input:checked + span {background: white;color: var(--primary-color);box-shadow: var(--shadow-sm);}
                 /* 7. 输入框与下拉框 */
-                .settings-input, .settings-select {width: 100%;max-width: 180px;padding: 8px 12px;border: 1.5px solid var(--border);border-radius: var(--radius-sm);background: #ffffff !important;color: var(--text-primary);font-size: 13px;transition: var(--transition);}
-                .settings-input:focus, .settings-select:focus {border-color: var(--primary-color);outline: none;box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);}
+                .fs-settings-input, .fs-settings-select {width: 100%;max-width: 180px;padding: 8px 12px;border: 1.5px solid var(--border);border-radius: var(--radius-sm);background: #ffffff !important;color: var(--text-primary);font-size: 13px;transition: var(--transition);}
+                .fs-settings-input:focus, .fs-settings-select:focus {border-color: var(--primary-color);outline: none;box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);}
                 /* 8. 底部状态反馈样式 */
-                .settings-status {flex: 1;font-size: 13px;display: flex;align-items: center;gap: 6px;}
-                .status-warning {color: var(--warning-color);background: rgba(245, 158, 11, 0.1);padding: 4px 10px;border-radius: 20px;}
-                .status-success {color: var(--secondary-color);animation: fadeIn 0.3s ease;}
+                .fs-settings-status {flex: 1;font-size: 13px;display: flex;align-items: center;gap: 6px;}
+                .fs-status-warning {color: var(--warning-color);background: rgba(245, 158, 11, 0.1);padding: 4px 10px;border-radius: 20px;}
+                .fs-status-success {color: var(--secondary-color);animation: fadeIn 0.3s ease;}
                 /* 9. 底部按钮组微调 */
-                .modal-footer .button-group {display: flex;gap: 10px;}
-                .reset-default-btn {margin-right: auto; /* 将恢复默认按钮推向最左侧 */color: var(--text-secondary) !important;}
-                .reset-default-btn:hover {color: var(--danger-color) !important;border-color: var(--danger-color) !important;}/* 模态框布局固定 */
-                .settings-modal-box {width: 90%;max-width: 600px;max-height: 85vh; /* 限制最高高度 */display: flex;flex-direction: column; /* 纵向排列 Header, Content, Footer */}
+                .fs-modal-footer .button-group {display: flex;gap: 10px;}
+                .fs-reset-default-btn {margin-right: auto; /* 将恢复默认按钮推向最左侧 */color: var(--text-secondary) !important;}
+                .fs-reset-default-btn:hover {color: var(--danger-color) !important;border-color: var(--danger-color) !important;}/* 模态框布局固定 */
+                .fs-settings-modal-box {width: 90%;max-width: 600px;max-height: 85vh; /* 限制最高高度 */display: flex;flex-direction: column; /* 纵向排列 Header, Content, Footer */}
                 /* 内容滚动区 */
-                .settings-scroll-area {flex: 1; /* 自动占据剩余高度 */overflow-y: auto; /* 关键：设置项过多时在此滚动 */padding: 24px;background: #ffffff;}
+                .fs-settings-scroll-area {flex: 1; /* 自动占据剩余高度 */overflow-y: auto; /* 关键：设置项过多时在此滚动 */padding: 24px;background: #ffffff;}
                 /* 只读行样式 */
-                .setting-row.readonly-row {background: #f1f5f9; /* 灰色背景 */opacity: 0.75;cursor: not-allowed;border: 1px dashed var(--border);}
-                .setting-row.readonly-row:hover {transform: none;box-shadow: none;}
+                .fs-setting-row.readonly-row {background: #f1f5f9; /* 灰色背景 */opacity: 0.75;cursor: not-allowed;border: 1px dashed var(--border);}
+                .fs-setting-row.readonly-row:hover {transform: none;box-shadow: none;}
                 .readonly-badge {background: var(--text-tertiary);color: white;font-size: 10px;padding: 2px 6px;border-radius: 4px;margin-left: 8px;vertical-align: middle;}
                 /* 禁用控件样式 */
-                .settings-switch.readonly, 
-                .settings-radio-group.readonly,
-                .settings-select:disabled,
-                .settings-input:read-only {pointer-events: none; /* 禁止点击 */filter: grayscale(1); /* 置灰 */}
+                .fs-settings-switch.readonly, 
+                .fs-settings-radio-group.readonly,
+                .fs-settings-select:disabled,
+                .fs-settings-input:read-only {pointer-events: none; /* 禁止点击 */filter: grayscale(1); /* 置灰 */}
                 /* Footer 固定在底部 */
-                .modal-footer {flex-shrink: 0;background: white;z-index: 10;}
+                .fs-modal-footer {flex-shrink: 0;background: white;z-index: 10;}
                 `;
                 document.head.appendChild(style);
             }
         }
+
         /**
          * 显示提示消息
          */
@@ -2364,7 +2401,7 @@
             // this.insertStyle();
 
             // 1. 防止重复打开
-            const existingModal = document.getElementById('settings-modal');
+            const existingModal = document.getElementById('fs-settings-modal');
             if (existingModal) existingModal.remove();
 
             // 2. 数据副本隔离：深拷贝原始设置
@@ -2374,7 +2411,7 @@
             // 3. 生成设置项 HTML
             let settingsHtml = '';
             editingSettings.forEach((setting) => {
-                const id = `setting-${setting.key}`;
+                const id = `fs-setting-${setting.key}`;
                 let controlHtml = '';
                 // 判定是否只读
                 const isReadonly = setting.readonly === true;
@@ -2382,26 +2419,26 @@
                 switch (setting.type) {
                     case 'checkbox':
                         controlHtml = `
-                    <label class="settings-switch ${isReadonly ? 'readonly' : ''}">
+                    <label class="fs-settings-switch ${isReadonly ? 'readonly' : ''}">
                         <input type="checkbox" id="${id}" ${setting.value ? 'checked' : ''} 
-                                class="settings-control-input" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
+                                class="fs-settings-control-input" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
                         <span class="switch-slider"></span>
                     </label>`;
                         break;
                     case 'select':
                         controlHtml = `
-                    <select id="${id}" class="settings-select" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
+                    <select id="${id}" class="fs-settings-select" data-key="${setting.key}" ${isReadonly ? 'disabled' : ''}>
                         ${setting.options.map(opt => `<option value="${opt.value}" ${opt.value === setting.value ? 'selected' : ''}>${opt.label}</option>`).join('')}
                     </select>`;
                         break;
                     case 'radio':
                         controlHtml = `
-                    <div class="settings-radio-group ${isReadonly ? 'readonly' : ''}" data-key="${setting.key}">
+                    <div class="fs-settings-radio-group ${isReadonly ? 'readonly' : ''}" data-key="${setting.key}">
                         ${setting.options.map(opt => `
-                            <label class="radio-tab">
+                            <label class="fs-reset-tab">
                                 <input type="radio" name="${setting.key}" value="${opt.value}" 
                                     ${opt.value === setting.value ? 'checked' : ''} 
-                                    class="settings-control-input" ${isReadonly ? 'disabled' : ''}>
+                                    class="fs-settings-control-input" ${isReadonly ? 'disabled' : ''}>
                                 <span>${opt.label}</span>
                             </label>
                         `).join('')}
@@ -2409,43 +2446,43 @@
                         break;
                     default:
                         controlHtml = `<input type="${setting.type || 'text'}" id="${id}" value="${setting.value}" 
-                                    class="settings-input" data-key="${setting.key}" ${isReadonly ? 'readonly' : ''}>`;
+                                    class="fs-settings-input" data-key="${setting.key}" ${isReadonly ? 'readonly' : ''}>`;
                 }
 
                 settingsHtml += `
-                    <div class="setting-row ${isReadonly ? 'readonly-row' : ''}">
-                        <div class="setting-info">
-                            <div class="setting-label-text">${setting.label}</div>
-                            <div class="setting-describe">${setting.describe || setting.description || ''}</div>
+                    <div class="fs-setting-row ${isReadonly ? 'readonly-row' : ''}">
+                        <div class="fs-setting-info">
+                            <div class="fs-setting-label-text">${setting.label}</div>
+                            <div class="fs-setting-describe">${setting.describe || setting.description || ''}</div>
                         </div>
-                        <div class="setting-action">${controlHtml}</div>
+                        <div class="fs-setting-action">${controlHtml}</div>
                     </div>`;
             });
 
             // 4. 构建模态框结构 (关键：固定头部底部，中间滚动)
             const modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
-            modalOverlay.id = 'settings-modal';
+            modalOverlay.className = 'fs-modal-overlay';
+            modalOverlay.id = 'fs-settings-modal';
             modalOverlay.innerHTML = `
-            <div class="modal settings-modal-box">
-                <div class="modal-header">
-                    <div class="modal-title">
+            <div class="modal fs-settings-modal-box">
+                <div class="fs-modal-header">
+                    <div class="fs-modal-title">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                         系统设置
                     </div>
-                    <button class="modal-close" id="close-modal-btn">
+                    <button class="fs-modal-close" id="close-modal-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
                 </div>
-                <div class="modal-content settings-scroll-area">
-                    <div class="settings-container">${settingsHtml}</div>
+                <div class="fs-modal-content fs-settings-scroll-area">
+                    <div class="fs-settings-container">${settingsHtml}</div>
                 </div>
-                <div class="modal-footer">
-                    <div id="settings-status-bar" class="settings-status"></div>
+                <div class="fs-modal-footer">
+                    <div id="fs-settings-status-bar" class="fs-settings-status"></div>
                     <div class="button-group">
-                        <button class="btn btn-outline reset-default-btn" id="reset-btn">恢复默认</button>
-                        <button class="btn btn-outline" id="cancel-btn">取消</button>
-                        <button class="btn btn-primary" id="save-btn">保存设置</button>
+                        <button class="btn fs-btn-outline fs-reset-default-btn" id="fs-reset-btn">恢复默认</button>
+                        <button class="btn fs-btn-outline" id="cancel-btn">取消</button>
+                        <button class="btn fs-btn-primary" id="save-btn">保存设置</button>
                     </div>
                 </div>
             </div>`;
@@ -2455,14 +2492,16 @@
             // --- 内部逻辑函数 ---
 
             const setStatus = (msg, type = 'info') => {
-                const statusEl = document.getElementById('settings-status-bar');
-                if (statusEl) statusEl.innerHTML = `<span class="status-${type}">${msg}</span>`;
+                const statusEl = document.getElementById('fs-settings-status-bar');
+                if (statusEl) statusEl.innerHTML = `<span class="fs-status-${type}">${msg}</span>`;
             };
 
             const closeSettings = (needConfirm = true) => {
                 if (settingsChanged && needConfirm) {
                     this.showAlertModal('warning', '未保存', '确定放弃当前修改并离开吗？', {
-                        confirmText: '放弃', showCancel: true, cancelText: '返回',
+                        confirmText: '放弃',
+                        showCancel: true,
+                        cancelText: '返回',
                         onConfirm: () => modalOverlay.remove()
                     });
                 } else {
@@ -2514,10 +2553,7 @@
                 // 【核心拦截】如果副本标志位或原始项是 readonly，直接不响应
                 if (!setting || setting.readonly) return;
 
-                if (target.type === 'checkbox') setting.value = target.checked;
-                else if (target.type === 'radio') setting.value = target.value;
-                else if (target.type === 'number') setting.value = parseFloat(target.value);
-                else setting.value = target.value;
+                if (target.type === 'checkbox') setting.value = target.checked; else if (target.type === 'radio') setting.value = target.value; else if (target.type === 'number') setting.value = parseFloat(target.value); else setting.value = target.value;
 
                 settingsChanged = true;
                 setStatus('设置已修改，请保存', 'warning');
@@ -2526,10 +2562,9 @@
             modalOverlay.querySelector('#save-btn').onclick = saveSettings;
             modalOverlay.querySelector('#cancel-btn').onclick = () => closeSettings(true);
             modalOverlay.querySelector('#close-modal-btn').onclick = () => closeSettings(true);
-            modalOverlay.querySelector('#reset-btn').onclick = () => {
+            modalOverlay.querySelector('#fs-reset-btn').onclick = () => {
                 this.showAlertModal('error', '重置所有设置？', '该操作将清除 GM 存储并刷新页面恢复默认配置！', {
-                    confirmText: '立即重置', showCancel: true,
-                    onConfirm: () => {
+                    confirmText: '立即重置', showCancel: true, onConfirm: () => {
                         deleteSettings();
                         location.reload();
                     }
@@ -2537,7 +2572,9 @@
             };
 
             // 遮罩点击及键盘支持
-            modalOverlay.onclick = (e) => { if (e.target === modalOverlay) closeSettings(true); };
+            modalOverlay.onclick = (e) => {
+                if (e.target === modalOverlay) closeSettings(true);
+            };
             const handleKey = (e) => {
                 if (e.key === 'Escape') closeSettings(true);
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveSettings();
@@ -2551,8 +2588,7 @@
         }
 
         showFirstTimeGuide() {
-            this.showAlertModal('info', '欢迎使用123FastLink',
-                `如果您是第一次使用本脚本，建议先阅读使用说明文档，了解基本功能和操作方法。
+            this.showAlertModal('info', '欢迎使用123FastLink', `如果您是第一次使用本脚本，建议先阅读使用说明文档，了解基本功能和操作方法。
                 \n
                 ✅️ 如果要使用二级秒传链接，
                 建议先在设置中设置秒传文件路径`);
@@ -2562,54 +2598,53 @@
          * 显示复制弹窗
          */
         showCopyModal(defaultText = "", allFilePath = [], title = "秒传链接") {
-            const fileListHtml = Array.isArray(this.shareLinkManager.fileInfoList) &&
-                allFilePath.length > 0 ? `
-                <div class="file-list-container">
-                    <div class="file-list-header">
-                        <div class="file-count">文件列表（共${allFilePath.length}个）</div>
+            const fileListHtml = Array.isArray(this.shareLinkManager.fileInfoList) && allFilePath.length > 0 ? `
+                <div class="fs-file-list-container">
+                    <div class="fs-file-list-header">
+                        <div class="fs-file-count">文件列表（共${allFilePath.length}个）</div>
                     </div>
-                    <div class="file-list">
+                    <div class="fs-file-list">
                         ${allFilePath.map(f => `
-                            <div class="file-item">${f}</div>
+                            <div class="fs-file-item">${f}</div>
                         `).join('')}
                     </div>
                 </div>
             ` : '';
 
             const modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
+            modalOverlay.className = 'fs-modal-overlay';
             modalOverlay.innerHTML = `
             <div class="modal">
-                <div class="modal-header">
-                    <div class="modal-title">
+                <div class="fs-modal-header">
+                    <div class="fs-modal-title">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="16 18 22 12 16 6"></polyline>
                             <polyline points="8 6 2 12 8 18"></polyline>
                         </svg>
                         ${title}
                     </div>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                    <button class="fs-modal-close" onclick="this.closest('.fs-modal-overlay').remove()">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
                     </button>
                 </div>
-                <div class="modal-content">
+                <div class="fs-modal-content">
                     ${fileListHtml}
                     <textarea id="copyText" placeholder="请输入或粘贴秒传链接...">${defaultText}</textarea>
                 </div>
-                <div class="modal-footer">
+                <div class="fs-modal-footer">
                     <div class="dropdown">
-                        <button class="btn btn-primary dropdown-toggle">
+                        <button class="btn fs-btn-primary fs-dropdown-toggle">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                             </svg>
                             复制
                         </button>
-                        <div class="dropdown-menu">
-                            <div class="dropdown-item" data-type="json">
+                        <div class="fs-dropdown-menu">
+                            <div class="fs-dropdown-item" data-type="json">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path>
                                     <path d="M18 14h-8"></path>
@@ -2618,7 +2653,7 @@
                                 </svg>
                                 复制JSON
                             </div>
-                            <div class="dropdown-item" data-type="text">
+                            <div class="fs-dropdown-item" data-type="text">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <polyline points="16 18 22 12 16 6"></polyline>
                                     <polyline points="8 6 2 12 8 18"></polyline>
@@ -2627,7 +2662,7 @@
                             </div>
                         </div>
                     </div>
-                    <button class="btn btn-secondary" id="exportJsonButton">
+                    <button class="btn fs-btn-secondary" id="exportJsonButton">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="7 10 12 15 17 10"></polyline>
@@ -2640,7 +2675,7 @@
         `;
 
             // 复制菜单事件
-            const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
+            const dropdownItems = modalOverlay.querySelectorAll('.fs-dropdown-item');
             dropdownItems.forEach(item => {
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -2650,7 +2685,7 @@
             });
 
             // 主复制按钮事件
-            modalOverlay.querySelector('.dropdown-toggle').addEventListener('click', (e) => {
+            modalOverlay.querySelector('.fs-dropdown-toggle').addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.copyContent('default');
             });
@@ -2740,7 +2775,7 @@
 
         // 下载JSON文件
         downloadJsonFile(content, filename) {
-            const blob = new Blob([content], { type: 'application/json' });
+            const blob = new Blob([content], {type: 'application/json'});
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -2766,21 +2801,21 @@
                 return;
             }
 
-            let modal = document.getElementById('progress-modal');
+            let modal = document.getElementById('fs-progress-modal');
             if (!modal) {
                 modal = document.createElement('div');
-                modal.id = 'progress-modal';
-                modal.className = 'modal-overlay progress-modal';
+                modal.id = 'fs-progress-modal';
+                modal.className = 'fs-modal-overlay fs-progress-modal';
                 modal.innerHTML = `
                 <div class="modal" style="max-width: 400px;">
-                    <div class="modal-header">
-                        <div class="modal-title">
+                    <div class="fs-modal-header">
+                        <div class="fs-modal-title">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-pulse">
                                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
                             </svg>
                             ${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}
                         </div>
-                        <button class="progress-minimize-btn" title="最小化">
+                        <button class="fs-progress-minimize-btn" title="最小化">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <polyline points="4 14 10 14 10 20"></polyline>
                                 <polyline points="20 10 14 10 14 4"></polyline>
@@ -2789,20 +2824,20 @@
                             </svg>
                         </button>
                     </div>
-                    <div class="progress-content">
-                        <div class="progress-bar-container">
-                            <div class="progress-bar" id="progress-bar" style="width: ${percent}%"></div>
+                    <div class="fs-progress-content">
+                        <div class="fs-progress-bar-container">
+                            <div class="fs-progress-bar" id="fs-progress-bar" style="width: ${percent}%"></div>
                         </div>
-                        <div class="progress-info">
-                            <div class="progress-percent">${percent}%</div>
+                        <div class="fs-progress-info">
+                            <div class="fs-progress-percent">${percent}%</div>
                         </div>
-                        ${desc ? `<div class="progress-desc">${desc}</div>` : ''}
+                        ${desc ? `<div class="fs-progress-desc">${desc}</div>` : ''}
                     </div>
                 </div>
             `;
 
                 // 最小化按钮事件
-                const minimizeBtn = modal.querySelector('.progress-minimize-btn');
+                const minimizeBtn = modal.querySelector('.fs-progress-minimize-btn');
                 minimizeBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.isProgressMinimized = true;
@@ -2812,10 +2847,10 @@
 
                 document.body.appendChild(modal);
             } else {
-                const titleElement = modal.querySelector('.modal-title');
-                const barElement = modal.querySelector('#progress-bar');
-                const percentElement = modal.querySelector('.progress-percent');
-                const descElement = modal.querySelector('.progress-desc');
+                const titleElement = modal.querySelector('.fs-modal-title');
+                const barElement = modal.querySelector('#fs-progress-bar');
+                const percentElement = modal.querySelector('.fs-progress-percent');
+                const descElement = modal.querySelector('.fs-progress-desc');
 
                 if (titleElement) {
                     titleElement.innerHTML = `
@@ -2831,9 +2866,9 @@
 
                 if (desc) {
                     if (!descElement) {
-                        const progressContent = modal.querySelector('.progress-content');
+                        const progressContent = modal.querySelector('.fs-progress-content');
                         const descDiv = document.createElement('div');
-                        descDiv.className = 'progress-desc';
+                        descDiv.className = 'fs-progress-desc';
                         descDiv.textContent = desc;
                         progressContent.appendChild(descDiv);
                     } else {
@@ -2851,7 +2886,7 @@
          * 任务列表管理 - 统一处理任务列表的创建、更新和事件绑定
          */
         manageTaskList(modal) {
-            const existingContainer = modal.querySelector('.task-list-container');
+            const existingContainer = modal.querySelector('.fs-task-list-container');
             const currentTaskCount = this.taskList.length;
 
             if (currentTaskCount === 0) {
@@ -2860,27 +2895,27 @@
             }
 
             const generateHtml = () => `
-            <div class="task-list-container">
-                <button class="task-toggle" id="task-list-toggle">
+            <div class="fs-task-list-container">
+                <button class="fs-task-toggle" id="fs-task-list-toggle">
                     <span>任务队列 (${currentTaskCount})</span>
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="6 9 12 15 18 9"></polyline>
                     </svg>
                 </button>
-                <div class="task-list" id="task-list">
+                <div class="fs-task-list" id="fs-task-list">
                     ${this.taskList.map(task => {
                 const isCurrentTask = this.currentTask && this.currentTask.id === task.id;
                 const typeIcon = task.type === 'generate' ? 'generate' : task.type === 'save' ? 'save' : 'retry';
                 return `
-                            <div class="task-item ${isCurrentTask ? 'current' : ''}" data-task-id="${task.id}">
-                                <div class="task-info">
-                                    <div class="task-icon ${typeIcon}"></div>
+                            <div class="fs-task-item ${isCurrentTask ? 'current' : ''}" data-task-id="${task.id}">
+                                <div class="fs-task-info">
+                                    <div class="fs-task-icon ${typeIcon}"></div>
                                     <div>
-                                        <div class="task-name">${this.taskHandlers[task.type].description}</div>
-                                        ${isCurrentTask ? '<div class="task-status">执行中...</div>' : ''}
+                                        <div class="fs-task-name">${this.taskHandlers[task.type].description}</div>
+                                        ${isCurrentTask ? '<div class="fs-task-status">执行中...</div>' : ''}
                                     </div>
                                 </div>
-                                <button class="task-remove" data-task-id="${task.id}" 
+                                <button class="fs-task-remove" data-task-id="${task.id}" 
                                     ${/*isCurrentTask ? 'disabled' : ''*/ ""}>
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -2895,8 +2930,8 @@
                 `;
 
             const bindEvents = (container) => {
-                const toggle = container.querySelector('#task-list-toggle');
-                const taskList = container.querySelector('#task-list');
+                const toggle = container.querySelector('#fs-task-list-toggle');
+                const taskList = container.querySelector('#fs-task-list');
 
                 toggle?.addEventListener('click', () => {
                     const isShown = taskList.classList.toggle('show');
@@ -2907,7 +2942,7 @@
                     }
                 });
 
-                container.querySelectorAll('.task-remove').forEach(btn => {
+                container.querySelectorAll('.fs-task-remove').forEach(btn => {
                     btn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         const taskId = btn.dataset.taskId;
@@ -2924,33 +2959,32 @@
             };
 
             if (!existingContainer) {
-                const progressContent = modal.querySelector('.progress-content');
+                const progressContent = modal.querySelector('.fs-progress-content');
                 progressContent.insertAdjacentHTML('beforeend', generateHtml());
-                bindEvents(modal.querySelector('.task-list-container'));
+                bindEvents(modal.querySelector('.fs-task-list-container'));
             } else {
-                const existingTaskItems = existingContainer.querySelectorAll('.task-item');
-                const hasCurrentTaskChanged = existingContainer.querySelector('.task-item.current') ?
-                    !this.currentTask : !!this.currentTask;
+                const existingTaskItems = existingContainer.querySelectorAll('.fs-task-item');
+                const hasCurrentTaskChanged = existingContainer.querySelector('.fs-task-item.current') ? !this.currentTask : !!this.currentTask;
 
                 if (existingTaskItems.length !== currentTaskCount || hasCurrentTaskChanged) {
-                    const wasExpanded = existingContainer.querySelector('.task-list').classList.contains('show');
+                    const wasExpanded = existingContainer.querySelector('.fs-task-list').classList.contains('show');
                     existingContainer.remove();
 
-                    const progressContent = modal.querySelector('.progress-content');
+                    const progressContent = modal.querySelector('.fs-progress-content');
                     progressContent.insertAdjacentHTML('beforeend', generateHtml());
-                    const newContainer = modal.querySelector('.task-list-container');
+                    const newContainer = modal.querySelector('.fs-task-list-container');
                     bindEvents(newContainer);
 
                     if (wasExpanded) {
-                        const taskList = newContainer.querySelector('.task-list');
-                        const toggle = newContainer.querySelector('#task-list-toggle');
+                        const taskList = newContainer.querySelector('.fs-task-list');
+                        const toggle = newContainer.querySelector('#fs-task-list-toggle');
                         taskList.classList.add('show');
                         toggle.classList.add('active');
                         const svg = toggle.querySelector('svg');
                         if (svg) svg.style.transform = 'rotate(180deg)';
                     }
                 } else {
-                    const toggleSpan = existingContainer.querySelector('#task-list-toggle span:first-child');
+                    const toggleSpan = existingContainer.querySelector('#fs-task-list-toggle span:first-child');
                     if (toggleSpan) toggleSpan.textContent = `任务队列 (${currentTaskCount})`;
                 }
             }
@@ -2958,7 +2992,7 @@
 
         // 隐藏进度条并删除浮动卡片
         hideProgressModal() {
-            const modal = document.getElementById('progress-modal');
+            const modal = document.getElementById('fs-progress-modal');
             if (modal) modal.remove();
             this.removeMinimizedWidget();
             this.isProgressMinimized = false;
@@ -2966,26 +3000,25 @@
 
         // 移除模态但保留 isProgressMinimized 标志（供最小化按钮调用）
         removeProgressModalAndKeepState() {
-            const modal = document.getElementById('progress-modal');
+            const modal = document.getElementById('fs-progress-modal');
             if (modal) modal.remove();
         }
 
         // 创建或更新右下角最小化浮动进度条卡片
         updateMinimizedWidget(title = '正在处理...', percent = 0, desc = '', taskCount = 1) {
             let widget = document.getElementById(this.minimizeWidgetId);
-            const badgeHtml = this.taskList.length >= 1 ?
-                `<div class="widget-badge">${this.taskList.length}</div>` : '';
+            const badgeHtml = this.taskList.length >= 1 ? `<div class="fs-widget-badge">${this.taskList.length}</div>` : '';
 
             const html = `
-            <div class="widget-header">
-                <div class="widget-title">${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}</div>
+            <div class="fs-widget-header">
+                <div class="fs-widget-title">${title}${taskCount > 1 ? ` - 队列 ${taskCount}` : ''}</div>
                 ${badgeHtml}
             </div>
-            <div class="widget-progress">
-                <div class="widget-bar">
-                    <div class="widget-fill" style="width: ${percent}%"></div>
+            <div class="fs-widget-progress">
+                <div class="fs-widget-bar">
+                    <div class="fs-widget-fill" style="width: ${percent}%"></div>
                 </div>
-                <div class="widget-percent">${percent}%</div>
+                <div class="fs-widget-percent">${percent}%</div>
             </div>
             `;
 
@@ -2995,7 +3028,7 @@
                 widget.className = 'minimized-widget';
                 widget.innerHTML = html;
 
-                widget.addEventListener('click', (e) => {
+                widget.addEventListener('mouseup', (e) => {
                     e.stopPropagation();
                     this.isProgressMinimized = false;
                     this.removeMinimizedWidget();
@@ -3066,10 +3099,10 @@
                 <div style="font-size: 13px; font-weight: 500; color: var(--info-color); margin-bottom: 8px;">
                     成功文件列表
                 </div>
-                <div class="failed-list">
+                <div class="fs-failed-list">
                     ${result.success.map(fileInfo => `
-                        <div class="failed-item">
-                            <div class="failed-name">${fileInfo.fileName}</div>
+                        <div class="fs-failed-item">
+                            <div class="fs-failed-name">${fileInfo.fileName}</div>
                         </div>
                     `).join('')}
                 </div>
@@ -3081,11 +3114,11 @@
                 <div style="font-size: 13px; font-weight: 500; color: var(--danger-color); margin-bottom: 8px;">
                     失败文件列表
                 </div>
-                <div class="failed-list">
+                <div class="fs-failed-list">
                     ${result.failed.map(fileInfo => `
-                        <div class="failed-item">
-                            <div class="failed-name">${fileInfo.fileName}</div>
-                            ${fileInfo.error ? `<div class="failed-error">${fileInfo.error}</div>` : ''}
+                        <div class="fs-failed-item">
+                            <div class="fs-failed-name">${fileInfo.fileName}</div>
+                            ${fileInfo.error ? `<div class="fs-failed-error">${fileInfo.error}</div>` : ''}
                         </div>
                     `).join('')}
                 </div>
@@ -3093,33 +3126,33 @@
             ` : '';
 
             const modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
+            modalOverlay.className = 'fs-modal-overlay';
             modalOverlay.innerHTML = `
             <div class="modal" style="max-width: 500px;">
-                <div class="modal-header">
-                    <div class="modal-title">
+                <div class="fs-modal-header">
+                    <div class="fs-modal-title">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
                             <polyline points="22 4 12 14.01 9 11.01"></polyline>
                         </svg>
                         保存结果
                     </div>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                    <button class="fs-modal-close" onclick="this.closest('.fs-modal-overlay').remove()">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
                     </button>
                 </div>
-                <div class="modal-content results-content">
-                    <div class="results-stats">
-                        <div class="stat-card success">
-                            <div class="stat-value success">${successCount}</div>
-                            <div class="stat-label">成功</div>
+                <div class="fs-modal-content fs-results-content">
+                    <div class="fs-results-stats">
+                        <div class="fs-stat-card success">
+                            <div class="fs-stat-value success">${successCount}</div>
+                            <div class="fs-stat-label">成功</div>
                         </div>
-                        <div class="stat-card failed">
-                            <div class="stat-value failed">${failedCount}</div>
-                            <div class="stat-label">失败</div>
+                        <div class="fs-stat-card failed">
+                            <div class="fs-stat-value failed">${failedCount}</div>
+                            <div class="fs-stat-label">失败</div>
                         </div>
                     </div>
                     <div style="text-align: center; font-size: 13px; color: var(--text-secondary); margin: 20px 0;">
@@ -3128,28 +3161,28 @@
                     ${successListHtml}
                     ${failedListHtml}
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-outline" onclick="this.closest('.modal-overlay').remove()">
+                <div class="fs-modal-footer">
+                    <button class="btn fs-btn-outline" onclick="this.closest('.fs-modal-overlay').remove()">
                         关闭
                     </button>
                     ${failedCount > 0 ? `
                         <div class="dropdown">
-                            <button class="btn btn-secondary dropdown-toggle">
+                            <button class="btn fs-btn-secondary fs-dropdown-toggle">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
                                     <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
                                 </svg>
                                 操作
                             </button>
-                            <div class="dropdown-menu">
-                                <div class="dropdown-item" data-action="retry">
+                            <div class="fs-dropdown-menu">
+                                <div class="fs-dropdown-item" data-action="retry">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
                                         <path d="M3 3v5h5"></path>
                                     </svg>
                                     重试失败
                                 </div>
-                                <div class="dropdown-item" data-action="export">
+                                <div class="fs-dropdown-item" data-action="export">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                         <polyline points="7 10 12 15 17 10"></polyline>
@@ -3165,14 +3198,14 @@
             `;
 
             if (failedCount > 0) {
-                const dropdownItems = modalOverlay.querySelectorAll('.dropdown-item');
+                const dropdownItems = modalOverlay.querySelectorAll('.fs-dropdown-item');
                 dropdownItems.forEach(item => {
                     item.addEventListener('click', async () => {
                         const action = item.dataset.action;
                         modalOverlay.remove();
 
                         if (action === 'retry') {
-                            this.addAndRunTask('retry', { fileList: result.failed });
+                            this.addAndRunTask('retry', {fileList: result.failed});
                         } else if (action === 'export') {
                             const shareLinkResult = this.shareLinkManager.buildShareLink(result.failed, result.commonPath || '', false);
                             this.showCopyModal(shareLinkResult[2], shareLinkResult[3] || [], "导出失败链接");
@@ -3221,8 +3254,7 @@
                     color: 'var(--secondary-color)',
                     bgColor: 'rgba(16, 185, 129, 0.1)',
                     borderColor: 'rgba(16, 185, 129, 0.2)'
-                },
-                error: {
+                }, error: {
                     icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="15" y1="9" x2="9" y2="15"></line>
@@ -3231,8 +3263,7 @@
                     color: 'var(--danger-color)',
                     bgColor: 'rgba(239, 68, 68, 0.1)',
                     borderColor: 'rgba(239, 68, 68, 0.2)'
-                },
-                warning: {
+                }, warning: {
                     icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                     <line x1="12" y1="9" x2="12" y2="13"></line>
@@ -3241,8 +3272,7 @@
                     color: 'var(--warning-color)',
                     bgColor: 'rgba(245, 158, 11, 0.1)',
                     borderColor: 'rgba(245, 158, 11, 0.2)'
-                },
-                info: {
+                }, info: {
                     icon: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="12" y1="16" x2="12" y2="12"></line>
@@ -3257,11 +3287,11 @@
             const config = iconConfig[type] || iconConfig.success;
 
             const modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
+            modalOverlay.className = 'fs-modal-overlay';
             modalOverlay.innerHTML = `
                 <div class="modal" style="max-width: 420px;">
-                    <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
-                        <div class="modal-title" style="justify-content: center; gap: 12px;">
+                    <div class="fs-modal-header" style="border-bottom: none; padding-bottom: 0;">
+                        <div class="fs-modal-title" style="justify-content: center; gap: 12px;">
                             <div style="width: 48px; height: 48px; border-radius: 50%; 
                                 background: ${config.bgColor}; border: 1px solid ${config.borderColor};
                                 display: flex; align-items: center; justify-content: center;
@@ -3269,14 +3299,14 @@
                                 ${config.icon}
                             </div>
                         </div>
-                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <button class="fs-modal-close" onclick="this.closest('.fs-modal-overlay').remove()">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
                                 <line x1="6" y1="6" x2="18" y2="18"></line>
                             </svg>
                         </button>
                     </div>
-                    <div class="modal-content" style="text-align: center; padding-top: 8px;">
+                    <div class="fs-modal-content" style="text-align: center; padding-top: 8px;">
                         <h3 style="margin: 0 0 12px 0; font-size: 18px; font-weight: 600; color: var(--text-primary);">
                             ${title}
                         </h3>
@@ -3285,13 +3315,13 @@
                             ${message}
                         </div>
                     </div>
-                    <div class="modal-footer" style="justify-content: ${showCancel ? 'space-between' : 'center'};">
+                    <div class="fs-modal-footer" style="justify-content: ${showCancel ? 'space-between' : 'center'};">
                         ${showCancel ? `
-                            <button class="btn btn-outline" id="cancelButton" style="min-width: 100px;">
+                            <button class="btn fs-btn-outline" id="cancelButton" style="min-width: 100px;">
                                 ${cancelText}
                             </button>
                         ` : ''}
-                        <button class="btn btn-primary" id="confirmButton" 
+                        <button class="btn fs-btn-primary" id="confirmButton" 
                             style="min-width: 100px; background: ${config.color}; border-color: ${config.color};">
                             ${confirmText}
                         </button>
@@ -3385,7 +3415,7 @@
 
         /**
          *  停止轮询更新进度
-         * @param {} poll 
+         * @param {} poll
          */
         stopRollPolling(poll) {
             clearInterval(poll);
@@ -3430,8 +3460,8 @@
 
         /**
          * 任务函数 - 启动从仅包含秒传链接文本内容保存秒传链接，UI层面的保存入口
-         * @param {string} linkText 
-         * @param {string} fileName 
+         * @param {string} linkText
+         * @param {string} fileName
          */
         async launchSaveLinkOnlyText(linkText, fileName) {
             // 链接格式校验
@@ -3442,9 +3472,7 @@
             const poll = this.startRollPolling("保存秒传链接");
             const saveResult = await this.shareLinkManager.saveShareLinkOnlyText(linkText, fileName);
             this.stopRollPolling(poll);
-            this.showAlertModal(saveResult[0] ? 'success' : 'error',
-                saveResult[0] ? '保存成功' : '保存失败',
-                saveResult[1]);
+            this.showAlertModal(saveResult[0] ? 'success' : 'error', saveResult[0] ? '保存成功' : '保存失败', saveResult[1]);
             this.renewWebPageList();
             this.showToast(saveResult ? "保存成功" : "保存失败", saveResult ? 'success' : 'error');
         }
@@ -3520,11 +3548,11 @@
          */
         async showInputModal(saveTask = 'save', canOnlyLink = true, buttonText = '保存') {
             const modalOverlay = document.createElement('div');
-            modalOverlay.className = 'modal-overlay';
+            modalOverlay.className = 'fs-modal-overlay';
             modalOverlay.innerHTML = `
             <div class="modal" style="max-width: 500px;">
-                <div class="modal-header">
-                    <div class="modal-title">
+                <div class="fs-modal-header">
+                    <div class="fs-modal-title">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                             <polyline points="14 2 14 8 20 8"></polyline>
@@ -3534,18 +3562,18 @@
                         </svg>
                         保存秒传链接
                     </div>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                    <button class="fs-modal-close" onclick="this.closest('.fs-modal-overlay').remove()">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
                     </button>
                 </div>
-                <div class="modal-content">
+                <div class="fs-modal-content">
                     <textarea id="saveText" placeholder="请输入或粘贴秒传链接，或将JSON文件拖拽到此处..."></textarea>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" id="saveButton">
+                <div class="fs-modal-footer">
+                    <button class="btn fs-btn-secondary" id="saveButton">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
                             <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -3554,7 +3582,7 @@
                     ${buttonText}
                     </button>
                     ${canOnlyLink ? `
-                    <button class="btn btn-primary" id="saveButtonOnlyLink">
+                    <button class="btn fs-btn-primary" id="saveButtonOnlyLink">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
                             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
@@ -3563,14 +3591,14 @@
                         仅保存链接
                     </button>
                     ` : ''}
-                    <button class="btn btn-outline" id="selectFileButton">
+                    <button class="btn fs-btn-outline" id="selectFileButton">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                             <polyline points="13 2 13 9 20 9"></polyline>
                         </svg>
                         选择文件
                     </button>
-                    <input type="file" class="file-input" id="jsonFileInput" accept=".">
+                    <input type="file" class="fs-file-input" id="jsonFileInput" accept=".">
                 </div>
             </div>
             `;
@@ -3592,7 +3620,7 @@
                     return;
                 }
                 modalOverlay.remove();
-                this.addAndRunTask(saveTask, { content });
+                this.addAndRunTask(saveTask, {content});
             });
 
             if (canOnlyLink) {
@@ -3604,7 +3632,7 @@
                         return;
                     }
                     modalOverlay.remove();
-                    this.addAndRunTask('saveOnlyLink', { content });
+                    this.addAndRunTask('saveOnlyLink', {content});
                 });
             }
 
@@ -3701,7 +3729,7 @@
             if (!taskData) return;
 
             const taskId = ++this.taskIdCounter;
-            const task = { id: taskId, ...taskData };
+            const task = {id: taskId, ...taskData};
             this.taskList.push(task);
             this.runNextTask();
         }
@@ -3727,8 +3755,7 @@
                         await taskConfig.handler.call(this, task);
                     } catch (error) {
                         console.error(`任务${task.id}执行失败:`, error);
-                        this.showAlertModal('error', '任务执行失败',
-                            `任务${task.id}执行过程中出现错误: ${error.message}`);
+                        this.showAlertModal('error', '任务执行失败', `任务${task.id}执行过程中出现错误: ${error.message}`);
                         this.showToast(`任务${task.id}执行失败: ${error.message}`, 'error');
                     }
                 } else {
@@ -3763,7 +3790,8 @@
             btnContainer.className = 'fs-mfy-button-container';
 
             const btn = document.createElement('button');
-            btn.className = 'ant-btn css-1bw9b22 ant-btn-primary ant-btn-variant-solid mfy-button fs-mfy-button upload-button'; // 利用现有样式
+            // ant-btn css-1n9kme6 ant-btn-primary ant-btn-variant-solid ant-dropdown-trigger mfy-button upload-button
+            btn.className = 'ant-btn css-1n9kme6 ant-btn-primary ant-btn-variant-solid ant-dropdown-trigger mfy-button upload-button fs-mfy-button upload-button'; // 利用现有样式
             btn.style = "background-color: #5ebf70;";
             btn.innerHTML = `${this.iconLibrary.transfer}<span>${options.buttonText || '秒传'}</span>`;
 
@@ -3813,17 +3841,21 @@
             this.console = console;
             this.debugMode = GlobalConfig.DEBUGMODE;
         }
+
         log(...args) {
             // 非调试模式不输出
             if (!GlobalConfig.DEBUGMODE) return;
             this.console.log(...args);
         }
+
         error(...args) {
             this.console.error(...args);
         }
+
         warn(...args) {
             this.console.warn(...args);
         }
+
         info(...args) {
             this.console.info(...args);
         }
@@ -3838,8 +3870,7 @@
         if (Settings) {
             try {
                 GlobalConfig = {
-                    ...GlobalConfig,
-                    ...Settings
+                    ...GlobalConfig, ...Settings
                 };
             } catch (e) {
                 console.error("加载设置失败:", e);
@@ -3848,11 +3879,11 @@
             }
         }
     }
+
     function saveSettings(settings) {
         // 应用到GlobalConfig
         GlobalConfig = {
-            ...GlobalConfig,
-            ...settings
+            ...GlobalConfig, ...settings
         };
         GM_setValue('fastlink_settings', settings);
     }
