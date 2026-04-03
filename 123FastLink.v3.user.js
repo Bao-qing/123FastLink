@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.28.1
+// @version      2026.4.03.1
 // @description  123云盘秒传链接脚本
 // @author       Baoqing
 // @author       Chaofan
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
     var GlobalConfig = {
-        scriptVersion: "3.1.3",                     // 脚本版本
+        scriptVersion: "3.1.4",                     // 脚本版本
         usesBase62EtagsInExport: true,              // 导出时使用Base62编码的etag
         getFileListPageDelay: 500,                  // 获取文件列表每页延时
         getFileInfoBatchSize: 100,                  // 批量获取文件信息的数量
@@ -2190,7 +2190,7 @@
                 .fs-modal-header{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
                 .fs-modal-title{font-size:20px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}
                 .fs-modal-title svg{width:20px;height:20px}
-                .fs-modal-close{background:none;border:none;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;transition:var(--transition)}
+                .fs-modal-close{background:none;border:none;height:32px;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;transition:var(--transition)}
                 .fs-modal-close:hover{background:var(--surface);color:var(--text-primary)}
                 .fs-modal-content{padding:24px}
                 .fs-modal-footer{padding:16px 24px 24px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end}
