@@ -2282,7 +2282,7 @@
                 .fs-failed-name{color:var(--text-primary);word-break:break-all}
                 .fs-failed-error{color:var(--danger-color);font-size:11px;margin-top:4px}
                 .fs-mfy-button-container{position:relative;display:inline-block}
-                .fs-mfy-button{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow)}
+                .fs-mfy-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,#64cc77,#4db366);color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow);width:90px;box-sizing:border-box}
                 .fs-mfy-button:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg)}
                 .fs-mfy-button svg{width:16px;height:16px}
                 .fs-mfy-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:160px;z-index:1000;opacity:0;transform:translateY(-10px);visibility:hidden;transition:var(--transition)}
@@ -2765,7 +2765,7 @@
             const jsonContent = this.shareLinkManager.textShareLinkToJson(shareLink)[2];
             // const jsonContent = JSON.stringify(jsonData, null, 2);
             this.shareLinkManager.getExportFilename(shareLink).then(filename => {
-                this.downloadJsonFile(JSON.stringify(jsonContent, null, 2), filename + '.json');
+                this.downloadJsonFile(jsonContent, filename + '.json');
                 this.showToast('JSON文件导出成功 📁', 'success');
             }).catch(err => {
                 this.showToast(`导出失败: ${err.message || '请重试'}`, 'error');
