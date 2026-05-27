@@ -1,4 +1,7 @@
 import { GlobalConfig } from "./config";
+import { createLogger } from "./logger";
+
+const log = createLogger('UI');
 import { saveSettings, deleteSettings } from "./config";
 import styles from "./styles.css";
 
@@ -1646,7 +1649,7 @@ export class UiManager {
         const taskConfig = this.taskHandlers[taskType];
 
         if (!taskConfig) {
-            console.warn(`未知的 taskType: ${taskType}`);
+            log.warn(`未知的 taskType: ${taskType}`);
             this.showToast(`未知的任务类型: ${taskType}`, 'error');
             return;
         }
@@ -1680,7 +1683,7 @@ export class UiManager {
                 try {
                     await taskConfig.handler.call(this, task);
                 } catch (error) {
-                    console.error(`任务${task.id}执行失败:`, error);
+                    log.error(`任务${task.id}执行失败:`, error);
                     this.showAlertModal('error', '任务执行失败', `任务${task.id}执行过程中出现错误: ${error.message}`);
                     this.showToast(`任务${task.id}执行失败: ${error.message}`, 'error');
                 }

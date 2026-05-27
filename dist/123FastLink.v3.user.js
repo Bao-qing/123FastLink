@@ -69,32 +69,46 @@ function isFirstTime() {
 ;// ./src/logger.js
 
 
-class logger {
-    constructor(console) {
-        this.console = console;
-        this.debugMode = GlobalConfig.DEBUGMODE;
-    }
+const COLORS = {
+    log: 'color: #6b7280',
+    info: 'color: #3b82f6',
+    warn: 'color: #f59e0b; font-weight: bold',
+    error: 'color: #ef4444; font-weight: bold'
+};
 
-    log(...args) {
-        if (!GlobalConfig.DEBUGMODE) return;
-        this.console.log(...args);
-    }
-
-    error(...args) {
-        this.console.error(...args);
-    }
-
-    warn(...args) {
-        this.console.warn(...args);
-    }
-
-    info(...args) {
-        this.console.info(...args);
-    }
+function timestamp() {
+    const d = new Date();
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}.${d.getMilliseconds().toString().padStart(3, '0')}`;
 }
+
+function createLogger(moduleName) {
+    return {
+        log(...args) {
+            if (!GlobalConfig.DEBUGMODE) return;
+            window.console.log(`%c[${timestamp()}] [123FL] [${moduleName}]`, COLORS.log, ...args);
+        },
+        info(...args) {
+            if (!GlobalConfig.DEBUGMODE) return;
+            window.console.info(`%c[${timestamp()}] [123FL] [${moduleName}]`, COLORS.info, ...args);
+        },
+        warn(...args) {
+            window.console.warn(`%c[${timestamp()}] [123FL] [${moduleName}]`, COLORS.warn, ...args);
+        },
+        error(...args) {
+            window.console.error(`%c[${timestamp()}] [123FL] [${moduleName}]`, COLORS.error, ...args);
+        }
+    };
+}
+
+const logger = createLogger('Main');
 
 ;// ./src/PanApiClient.js
 
+
+
+const log = createLogger('API');
+const uploadLog = createLogger('Upload');
+const downloadLog = createLogger('Download');
 
 class PanApiClient {
     constructor() {
@@ -138,7 +152,7 @@ class PanApiClient {
             }
             return data;
         } catch (e) {
-            console.error('[123FASTLINK] [PanApiClient]', 'API请求失败:', e);
+            log.error('API请求失败:', e);
             throw e;
         }
     }
@@ -161,8 +175,8 @@ class PanApiClient {
             inDirectSpace: 'false'
         };
         const data = await this.sendRequest("GET", "/b/api/file/list/new", urlParams);
-        //console.log("[123FASTLINK] [PanApiClient]", "获取文件列表:", data.data.InfoList);
-        console.log("[123FASTLINK] [PanApiClient]", "获取文件列表 ID：", parentFileId, "Page：", page);
+        //log.log("获取文件列表:", data.data.InfoList);
+        log.log("获取文件列表 ID：", parentFileId, "Page：", page);
         return { data: { InfoList: data.data.InfoList }, total: data.data.Total };
         //return { data: { fileList: data.data.fileList } };
     }
@@ -173,7 +187,7 @@ class PanApiClient {
         this.progressDesc = `获取文件列表 文件夹ID：${parentFileId}`;
         // 默认一页100
         // 先获取一次，得到Total
-        console.log("[123FASTLINK] [PanApiClient]", "开始获取文件列表,ID:", parentFileId);
+        log.log("开始获取文件列表,ID:", parentFileId);
         const info = await this.getOnePageFileList(parentFileId, 1);
         InfoList.push(...info.data.InfoList);
         const total = info.total;
@@ -205,18 +219,18 @@ class PanApiClient {
                 ...fileInfo, RequestSource: null
             }));
             const reuse = response['data']['Reuse'];
-            console.log('[123FASTLINK] [PanApiClient]', 'reuse：', reuse);
+            log.log('reuse：', reuse);
             if (response['code'] !== 0) {
                 return [false, response['message'], null];
             }
             if (!reuse) {
-                console.error('[123FASTLINK] [PanApiClient]', '保存文件失败:', fileInfo.fileName, 'response:', response);
+                log.error('保存文件失败:', fileInfo.fileName, 'response:', response);
                 return [false, "未能实现秒传", null];
             } else {
                 return [true, null, response['data']['Info']['FileId']];
             }
         } catch (error) {
-            console.error('[123FASTLINK] [PanApiClient]', '上传请求失败:', error);
+            log.error('上传请求失败:', error);
             return [false, '请求失败', null];
         }
     }
@@ -225,7 +239,7 @@ class PanApiClient {
     async getParentFileId() {
         const homeFilePath = JSON.parse(sessionStorage['filePath'])['homeFilePath'];
         const parentFileId = (homeFilePath[homeFilePath.length - 1] || 0);
-        console.log('[123FASTLINK] [PanApiClient] parentFileId:', parentFileId);
+        log.log('parentFileId:', parentFileId);
         return parentFileId.toString();
     }
 
@@ -273,12 +287,12 @@ class PanApiClient {
             }));
             folderFileId = response['data']['Info']['FileId'];
         } catch (error) {
-            console.error('[123FASTLINK] [PanApiClient]', '创建文件夹失败:', error);
+            log.error('创建文件夹失败:', error);
             return {
                 'folderFileId': null, 'folderName': folderName, 'success': false
             };
         }
-        console.log('[123FASTLINK] [PanApiClient]', '创建文件夹 ID:', folderFileId);
+        log.log('创建文件夹 ID:', folderFileId);
         return {
             'folderFileId': folderFileId, 'folderName': folderName, 'success': true
         };
@@ -430,7 +444,7 @@ class PanApiClient {
                 ...fileInfo, RequestSource: null
             }));
 
-            console.log('[123FASTLINK] [文本上传]', 'upload_request响应:', data);
+            uploadLog.log('upload_request响应:', data);
 
             if (data.code !== 0) {
                 return [false, data.message, null];
@@ -439,7 +453,7 @@ class PanApiClient {
             return [true, null, data.data];
 
         } catch (error) {
-            console.error('[123FASTLINK] [文本上传]', '上传请求失败:', error);
+            uploadLog.error('上传请求失败:', error);
             return [false, '上传请求失败: ' + error.message, null];
         }
     }
@@ -458,7 +472,7 @@ class PanApiClient {
                 StorageNode: storageNode
             }));
 
-            console.log('[123FASTLINK] [文本上传]', '获取上传凭证响应:', data);
+            uploadLog.log('获取上传凭证响应:', data);
 
             if (data.code !== 0) {
                 return [false, data.message, null];
@@ -474,7 +488,7 @@ class PanApiClient {
             return [true, null, firstUrl];
 
         } catch (error) {
-            console.error('[123FASTLINK] [文本上传]', '获取上传凭证失败:', error);
+            uploadLog.error('获取上传凭证失败:', error);
             return [false, '获取上传凭证失败: ' + error.message, null];
         }
     }
@@ -491,7 +505,7 @@ class PanApiClient {
             // 将文本转换为Blob
             const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
 
-            console.log('[123FASTLINK] [文本上传]', '开始上传到S3:', presignedUrl);
+            uploadLog.log('开始上传到S3:', presignedUrl);
 
             // 移除 x-amz-acl 头，因为预签名URL通常已经包含了所有必要的认证信息
             const response = await fetch(presignedUrl, {
@@ -501,17 +515,17 @@ class PanApiClient {
                 }, body: blob
             });
 
-            console.log('[123FASTLINK] [文本上传]', 'S3上传响应状态:', response.status, response.statusText);
+            uploadLog.log('S3上传响应状态:', response.status, response.statusText);
 
             if (response.ok || response.status === 200) {
                 return [true, null];
             } else {
                 const errorText = await response.text();
-                console.error('[123FASTLINK] [文本上传]', 'S3上传失败详情:', errorText);
+                uploadLog.error('S3上传失败详情:', errorText);
 
                 // 尝试不带Content-Type头再次上传（某些S3配置可能不需要）
                 if (response.status === 403 || response.status === 400) {
-                    console.log('[123FASTLINK] [文本上传]', '尝试不带Content-Type头上传');
+                    uploadLog.log('尝试不带Content-Type头上传');
                     const retryResponse = await fetch(presignedUrl, {
                         method: 'PUT', body: blob
                         // 完全不设置headers
@@ -529,7 +543,7 @@ class PanApiClient {
             }
 
         } catch (error) {
-            console.error('[123FASTLINK] [文本上传]', 'S3上传失败:', error);
+            uploadLog.error('S3上传失败:', error);
             return [false, 'S3上传失败: ' + error.message];
         }
     }
@@ -544,7 +558,7 @@ class PanApiClient {
                 uploadId: uploadId, StorageNode: storageNode
             }));
 
-            console.log('[123FASTLINK] [文本上传]', '完成上传响应:', data);
+            uploadLog.log('完成上传响应:', data);
 
             if (data.code !== 0) {
                 return [false, data.message, null];
@@ -553,7 +567,7 @@ class PanApiClient {
             return [true, null, data.data];
 
         } catch (error) {
-            console.error('[123FASTLINK] [文本上传]', '完成上传失败:', error);
+            uploadLog.error('完成上传失败:', error);
             return [false, '完成上传失败: ' + error.message, null];
         }
     }
@@ -568,7 +582,7 @@ class PanApiClient {
      */
     async uploadTextFile(fileName, text, parentFileId = 0) {
         try {
-            console.log('[123FASTLINK] [文本上传]', '开始上传文本文件:', fileName);
+            uploadLog.log('开始上传文本文件:', fileName);
 
             // 1. 获取父文件夹ID
             if (!parentFileId) {
@@ -577,14 +591,14 @@ class PanApiClient {
 
             // 2. 计算文件大小
             const fileSize = this.calculateStringSize(text);
-            console.log('[123FASTLINK] [文本上传]', '文件大小:', fileSize, '字节');
+            uploadLog.log('文件大小:', fileSize, '字节');
 
             // 3. 计算MD5
             const md5 = this.md5(text);
-            console.log('[123FASTLINK] [文本上传]', '文件MD5:', md5);
+            uploadLog.log('文件MD5:', md5);
 
             // 4. 第一步：上传请求
-            console.log('[123FASTLINK] [文本上传]', '步骤1: 上传请求');
+            uploadLog.log('步骤1: 上传请求');
             const [requestSuccess, requestError, uploadData] = await this.uploadRequest({
                 driveId: 0, etag: md5, fileName: fileName, parentFileId: parentFileId, size: fileSize, type: 0,  // 0表示文件，1表示文件夹
                 duplicate: 1,  // 1表示覆盖同名文件
@@ -596,51 +610,51 @@ class PanApiClient {
                 return [false, '上传请求失败: ' + requestError, null];
             }
 
-            console.log('[123FASTLINK] [文本上传]', '上传请求数据:', uploadData);
+            uploadLog.log('上传请求数据:', uploadData);
 
             // 5. 检查是否秒传
             if (uploadData.Reuse) {
-                console.log('[123FASTLINK] [文本上传]', '秒传成功，文件ID:', uploadData.FileId);
+                uploadLog.log('秒传成功，文件ID:', uploadData.FileId);
                 return [true, "秒传成功", uploadData.FileId, {
                     etag: md5, fileName: fileName, size: fileSize
                 }];
             }
 
             // 6. 第二步：获取上传凭证
-            console.log('[123FASTLINK] [文本上传]', '步骤2: 获取上传凭证');
+            uploadLog.log('步骤2: 获取上传凭证');
             const [authSuccess, authError, presignedUrl] = await this.getUploadAuth(uploadData.Bucket, uploadData.Key, uploadData.UploadId, uploadData.StorageNode);
 
             if (!authSuccess) {
                 return [false, '获取上传凭证失败: ' + authError, null];
             }
 
-            console.log('[123FASTLINK] [文本上传]', '预签名URL:', presignedUrl);
+            uploadLog.log('预签名URL:', presignedUrl);
 
             // 7. 第三步：上传到S3
-            console.log('[123FASTLINK] [文本上传]', '步骤3: 上传到S3');
+            uploadLog.log('步骤3: 上传到S3');
             const [uploadSuccess, uploadError] = await this.uploadToS3Entire(presignedUrl, text);
 
             if (!uploadSuccess) {
                 return [false, 'S3上传失败: ' + uploadError, null];
             }
 
-            console.log('[123FASTLINK] [文本上传]', 'S3上传成功');
+            uploadLog.log('S3上传成功');
 
             // 8. 第四步：完成上传
-            console.log('[123FASTLINK] [文本上传]', '步骤4: 完成上传');
+            uploadLog.log('步骤4: 完成上传');
             const [completeSuccess, completeError, completeData] = await this.completeUpload(uploadData.FileId, uploadData.Bucket, fileSize, uploadData.Key, uploadData.UploadId, uploadData.StorageNode);
 
             if (!completeSuccess) {
                 return [false, '完成上传失败: ' + completeError, null];
             }
 
-            console.log('[123FASTLINK] [文本上传]', '上传完成，文件ID:', uploadData.FileId);
+            uploadLog.log('上传完成，文件ID:', uploadData.FileId);
             return [true, "上传完成", uploadData.FileId, {
                 etag: md5, fileName: fileName, size: fileSize
             }];
 
         } catch (error) {
-            console.error('[123FASTLINK] [文本上传]', '文本上传流程失败:', error);
+            uploadLog.error('文本上传流程失败:', error);
             return [false, '上传流程失败: ' + error.message, null];
         }
     }
@@ -679,7 +693,7 @@ class PanApiClient {
      */
     async getDispatchList(fileInfo) {
         try {
-            console.log('[123FASTLINK] [下载API]', '获取下载调度列表，文件:', fileInfo.fileName);
+            downloadLog.log('获取下载调度列表，文件:', fileInfo.fileName);
 
             const data = await this.sendRequest('POST', '/b/api/v2/file/download_info', {}, JSON.stringify({
                 driveId: 0,
@@ -691,17 +705,17 @@ class PanApiClient {
                 size: fileInfo.size.toString()
             }));
 
-            console.log('[123FASTLINK] [下载API]', '获取下载调度列表响应:', data);
+            downloadLog.log('获取下载调度列表响应:', data);
 
             if (data.code !== 0) {
-                console.error('[123FASTLINK] [下载API]', '获取下载调度列表失败:', data.message);
+                downloadLog.error('获取下载调度列表失败:', data.message);
                 return [false, data.message, null];
             }
 
             return [true, null, data.data];
 
         } catch (error) {
-            console.error('[123FASTLINK] [下载API]', '获取下载调度列表异常:', error);
+            downloadLog.error('获取下载调度列表异常:', error);
             return [false, '获取下载调度列表失败: ' + error.message, null];
         }
     }
@@ -720,7 +734,7 @@ class PanApiClient {
      */
     async getDownloadLink(fileInfo, preferredIsp = null) {
         try {
-            console.log('[123FASTLINK] [下载API]', '获取下载链接，文件:', fileInfo.fileName);
+            downloadLog.log('获取下载链接，文件:', fileInfo.fileName);
 
             // 1. 获取调度列表
             const [dispatchSuccess, dispatchError, dispatchData] = await this.getDispatchList(fileInfo);
@@ -752,7 +766,7 @@ class PanApiClient {
                 selectedDispatch = dispatchList[randomIndex];
             }
 
-            console.log('[123FASTLINK] [下载API]', '选择的下载线路:', selectedDispatch.isp, 'URL前缀:', selectedDispatch.prefix);
+            downloadLog.log('选择的下载线路:', selectedDispatch.isp, 'URL前缀:', selectedDispatch.prefix);
 
             // 3. 拼接完整的下载链接
             // 确保前缀不以斜杠结尾，路径以斜杠开头
@@ -761,7 +775,7 @@ class PanApiClient {
 
             const downloadLink = `${cleanPrefix}${cleanPath}`;
 
-            console.log('[123FASTLINK] [下载API]', '完整下载链接:', downloadLink);
+            downloadLog.log('完整下载链接:', downloadLink);
 
             return [true, null, {
                 downloadLink,
@@ -773,7 +787,7 @@ class PanApiClient {
             }];
 
         } catch (error) {
-            console.error('[123FASTLINK] [下载API]', '获取下载链接异常:', error);
+            downloadLog.error('获取下载链接异常:', error);
             return [false, '获取下载链接失败: ' + error.message, null];
         }
     }
@@ -793,7 +807,7 @@ class PanApiClient {
         } = options;
 
         try {
-            console.log('[123FASTLINK] [下载API]', '获取链接文本内容:', downloadLink);
+            downloadLog.log('获取链接文本内容:', downloadLink);
 
             // 使用AbortController实现超时控制
             const controller = new AbortController();
@@ -809,14 +823,14 @@ class PanApiClient {
 
                 clearTimeout(timeoutId);
 
-                console.log('[123FASTLINK] [下载API]', '响应状态:', response.status, response.statusText);
+                downloadLog.log('响应状态:', response.status, response.statusText);
 
                 if (!response.ok) {
                     // 尝试获取更多错误信息
                     let errorText = '';
                     try {
                         errorText = await response.text();
-                        console.error('[123FASTLINK] [下载API]', '错误响应内容:', errorText);
+                        downloadLog.error('错误响应内容:', errorText);
                     } catch (e) {
                         // 忽略读取错误
                     }
@@ -832,7 +846,7 @@ class PanApiClient {
 
                 // 获取文本内容
                 const textContent = await response.text();
-                console.log('[123FASTLINK] [下载API]', '获取到文本内容，长度:', textContent.length, '字符');
+                downloadLog.log('获取到文本内容，长度:', textContent.length, '字符');
 
                 if (includeHeaders) {
                     return [true, null, {
@@ -852,11 +866,11 @@ class PanApiClient {
 
         } catch (error) {
             if (error.name === 'AbortError') {
-                console.error('[123FASTLINK] [下载API]', '请求超时:', timeout, 'ms');
+                downloadLog.error('请求超时:', timeout, 'ms');
                 return [false, `请求超时 (${timeout}ms)`, null];
             }
 
-            console.error('[123FASTLINK] [下载API]', '获取链接文本内容异常:', error);
+            downloadLog.error('获取链接文本内容异常:', error);
             return [false, '获取链接文本内容失败: ' + error.message, null];
         }
     }
@@ -876,10 +890,10 @@ class PanApiClient {
      */
     async downloadTextFile(fileInfo, preferredIsp = null, options = {}) {
         try {
-            console.log('[123FASTLINK] [下载API]', '开始下载文本文件:', fileInfo.fileName);
+            downloadLog.log('开始下载文本文件:', fileInfo.fileName);
 
             // 1. 获取下载链接
-            console.log('[123FASTLINK] [下载API]', '步骤1: 获取下载链接');
+            downloadLog.log('步骤1: 获取下载链接');
             const [linkSuccess, linkError, linkData] = await this.getDownloadLink(fileInfo, preferredIsp);
             if (!linkSuccess) {
                 return [false, '获取下载链接失败: ' + linkError, null];
@@ -888,18 +902,18 @@ class PanApiClient {
             const { downloadLink } = linkData;
 
             // 2. 获取文本内容
-            console.log('[123FASTLINK] [下载API]', '步骤2: 获取文本内容');
+            downloadLog.log('步骤2: 获取文本内容');
             const [contentSuccess, contentError, content] = await this.getLinkTextContent(downloadLink, options);
 
             if (!contentSuccess) {
                 return [false, '获取文本内容失败: ' + contentError, null];
             }
 
-            console.log('[123FASTLINK] [下载API]', '下载完成，文件:', fileInfo.fileName);
+            downloadLog.log('下载完成，文件:', fileInfo.fileName);
             return [true, null, content];
 
         } catch (error) {
-            console.error('[123FASTLINK] [下载API]', '下载文本文件流程异常:', error);
+            downloadLog.error('下载文本文件流程异常:', error);
             return [false, '下载文本文件失败: ' + error.message, null];
         }
     }
@@ -913,7 +927,7 @@ class PanApiClient {
      */
     async downloadTextFileById(fileId, preferredIsp = null) {
         try {
-            console.log('[123FASTLINK] [下载API]', '通过文件ID下载文本文件:', fileId);
+            downloadLog.log('通过文件ID下载文本文件:', fileId);
 
             // 1. 先获取文件信息
             const fileInfoResponse = await this.getFileInfo([fileId]);
@@ -940,13 +954,13 @@ class PanApiClient {
             if (fileInfo.size > this.maxTextFileSize) {
                 return [false, `文件过大，无法作为文本下载（最大支持 ${this.maxTextFileSize} 字节）`, null];
             }
-            console.log('[123FASTLINK] [下载API]', '获取到文件信息:', fileInfo);
+            downloadLog.log('获取到文件信息:', fileInfo);
 
             // 3. 下载文件
             return await this.downloadTextFile(fileInfo, preferredIsp);
 
         } catch (error) {
-            console.error('[123FASTLINK] [下载API]', '通过文件ID下载异常:', error);
+            downloadLog.error('通过文件ID下载异常:', error);
             return [false, '通过文件ID下载失败: ' + error.message, null];
         }
     }
@@ -959,7 +973,7 @@ class PanApiClient {
      */
     async downloadFileAsBlob(fileInfo, preferredIsp = null) {
         try {
-            console.log('[123FASTLINK] [下载API]', '下载文件为Blob:', fileInfo.fileName);
+            downloadLog.log('下载文件为Blob:', fileInfo.fileName);
 
             // 1. 获取下载链接
             const [linkSuccess, linkError, linkData] = await this.getDownloadLink(fileInfo, preferredIsp);
@@ -981,12 +995,12 @@ class PanApiClient {
             }
 
             const blob = await response.blob();
-            console.log('[123FASTLINK] [下载API]', '下载Blob完成，大小:', blob.size, '字节');
+            downloadLog.log('下载Blob完成，大小:', blob.size, '字节');
 
             return [true, null, blob];
 
         } catch (error) {
-            console.error('[123FASTLINK] [下载API]', '下载文件为Blob异常:', error);
+            downloadLog.error('下载文件为Blob异常:', error);
             return [false, '下载文件失败: ' + error.message, null];
         }
     }
@@ -1047,6 +1061,9 @@ class TableRowSelector {
 ;// ./src/ShareLinkManager.js
 
 
+
+const ShareLinkManager_log = createLogger('ShareLink');
+
 class ShareLinkManager {
     constructor(apiClient) {
         this.apiClient = apiClient;
@@ -1080,7 +1097,7 @@ class ShareLinkManager {
      * @param {*} total 仅用来计算进度
      */
     async _getAllFileInfoByFolderId(parentFileId, folderName = '', total) {
-        //console.log("[123FASTLINK] [ShareLinkManager]", await this.apiClient.getFileList(parentFileId));
+        //log.log(await this.apiClient.getFileList(parentFileId));
         this.progressDesc = `正在扫描文件夹：${folderName}`;
         let progress = this.progress;
 
@@ -1107,7 +1124,7 @@ class ShareLinkManager {
         });
 
         this.fileInfoList.push(...fileInfo);
-        console.log("[123FASTLINK] [ShareLinkManager]", "获取文件列表,ID:", parentFileId);
+        ShareLinkManager_log.log("获取文件列表,ID:", parentFileId);
 
         const directoryFileInfo = allFileInfoList.filter(file => file.type === 1);
 
@@ -1140,7 +1157,7 @@ class ShareLinkManager {
                 const response = await this.apiClient.getFileInfo(batch);
                 allFileInfo = allFileInfo.concat(response.data.InfoList || []);
             } catch (e) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '获取文件信息失败:', e);
+                ShareLinkManager_log.error('获取文件信息失败:', e);
             }
             completed += batch.length;
             // 不能走到100，否则会自动消失，下面获取文件夹还用使用
@@ -1312,7 +1329,7 @@ class ShareLinkManager {
                 shareFileInfo = shareLink.replace(`${commonPath}%`, '');
 
             } else {
-                console.error('[123FASTLINK] [ShareLinkManager]', '不支持的公共路径格式', commonPathLinkPrefix);
+                ShareLinkManager_log.error('不支持的公共路径格式', commonPathLinkPrefix);
                 return [false, '不支持的公共路径格式', null];
             }
 
@@ -1331,16 +1348,16 @@ class ShareLinkManager {
             let failed = false;
             // etag校验
             if (!this._isValidEtag(etag)) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', etag);
+                ShareLinkManager_log.error('无效的etag:', etag);
                 failed = true;
             }
             const size = singleFileInfoList[1];
             if (isNaN(size) || Number(size) < 0) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件大小:', size);
+                ShareLinkManager_log.error('无效的文件大小:', size);
                 failed = true;
             }
             if (!singleFileInfoList[2]) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件路径:', singleFileInfoList[2]);
+                ShareLinkManager_log.error('无效的文件路径:', singleFileInfoList[2]);
                 failed = true;
             }
             if (failed) {
@@ -1484,12 +1501,12 @@ class ShareLinkManager {
                 successList.push(fileInfo);
             } else {
                 failed++;
-                console.error('[123FASTLINK] [ShareLinkManager]', '保存文件失败:', fileInfo.fileName);
+                ShareLinkManager_log.error('保存文件失败:', fileInfo.fileName);
                 fileInfo.error = reuse[1];
                 failedList.push(fileInfo);
             }
             completed++;
-            console.log('[123FASTLINK] [ShareLinkManager]', '已保存:', fileInfo.fileName);
+            ShareLinkManager_log.log('已保存:', fileInfo.fileName);
             this.progress = Math.round((completed / total) * 100);
             this.progressDesc = `(成功: ${success}，失败: ${failed})
             正在保存第 ${completed} / ${total} 个文件(${fileInfo.fileName})...`;
@@ -1702,7 +1719,7 @@ class ShareLinkManager {
                 shareFileList.forEach(file => {
                     file.etag = this._base62ToHex(file.etag);
                     if (!this._isValidEtag(file.etag)) {
-                        console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', file.etag);
+                        ShareLinkManager_log.error('无效的etag:', file.etag);
                         failedList.push({
                             etag: file.etag, size: file.size, path: file.path, fileName: file.path.split('/').pop()
                         });
@@ -1714,7 +1731,7 @@ class ShareLinkManager {
             });
             return [true, null, shareFileList, failedList, commonPath];
         } catch (error) {
-            console.error('[123FASTLINK] [ShareLinkManager]', '解析JSON格式秒传链接失败:', error);
+            ShareLinkManager_log.error('解析JSON格式秒传链接失败:', error);
             return [false, '解析JSON格式秒传链接失败: ' + error.message, null, null];
         }
     }
@@ -1752,7 +1769,7 @@ class ShareLinkManager {
 
     _buildJsonShareLink(fileInfoList, commonPath = '', usesBase62EtagsInExport = false) {
         if (fileInfoList.length === 0) {
-            console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+            ShareLinkManager_log.error('解析秒传链接失败:', shareLink);
             return [false, '解析秒传链接失败: 文件列表为空', null];
         }
         // if (usesBase62EtagsInExport) {
@@ -1840,6 +1857,9 @@ class ShareLinkManager {
 /* harmony default export */ const styles = (":root{--primary-color:#6366f1;--primary-hover:#4f46e5;--secondary-color:#10b981;--secondary-hover:#059669;--danger-color:#ef4444;--danger-hover:#dc2626;--warning-color:#f59e0b;--warning-hover:#d97706;--info-color:#3b82f6;--info-hover:#2563eb;--background:#ffffff;--surface:#f8fafc;--border:#e2e8f0;--text-primary:#1e293b;--text-secondary:#64748b;--text-tertiary:#94a3b8;--shadow-sm:0 1px 2px 0 rgba(0,0,0,0.05);--shadow:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -1px rgba(0,0,0,0.06);--shadow-lg:0 10px 15px -3px rgba(0,0,0,0.1),0 4px 6px -2px rgba(0,0,0,0.05);--shadow-xl:0 20px 25px -5px rgba(0,0,0,0.1),0 10px 10px -5px rgba(0,0,0,0.04);--radius-sm:6px;--radius:12px;--radius-lg:16px;--transition:all 0.2s cubic-bezier(0.4,0,0.2,1)}\n.fs-modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:9999;animation:fadeIn 0.2s ease-out}\n.modal{background:var(--background);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);width:90%;max-width:500px;max-height:90vh;overflow:hidden;border:1px solid var(--border);transform:translateY(0);animation:slideUp 0.3s cubic-bezier(0.4,0,0.2,1)}\n.fs-modal-header{padding:24px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}\n.fs-modal-title{font-size:20px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px}\n.fs-modal-title svg{width:20px;height:20px}\n.fs-modal-close{background:none;border:none;height:32px;display:flex;align-items:center;justify-content:center;color:var(--text-secondary);cursor:pointer;transition:var(--transition)}\n.fs-modal-close:hover{background:var(--surface);color:var(--text-primary)}\n.fs-modal-content{padding:24px}\n.fs-modal-footer{padding:16px 24px 24px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end}\n.fs-file-input{display:none}\n.fs-file-list-container{background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:20px;max-height:200px;overflow-y:auto}\n.fs-file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}\n.fs-file-count{font-size:13px;color:var(--text-secondary);font-weight:500}\n.fs-file-list{display:flex;flex-direction:column;gap:8px}\n.fs-file-item{font-size:13px;color:var(--text-primary);padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);word-break:break-all;line-height:1.4}\n.modal textarea{width:100%;min-height:120px;padding:16px;border:2px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text-primary);font-family:'JetBrains Mono','Consolas','Monaco',monospace;font-size:13px;line-height:1.5;resize:vertical;transition:var(--transition);box-sizing:border-box}\n.modal textarea:focus{outline:none;border-color:var(--primary-color);box-shadow:0 0 0 3px rgba(99,102,241,0.1)}\n.modal textarea.drag-over{border-color:var(--primary-color);background:rgba(99,102,241,0.05)}\n.button-group{display:flex;gap:12px;align-items:center}\n.btn{padding:10px 20px;border-radius:var(--radius);font-size:14px;font-weight:500;border:none;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:100px}\n.btn:disabled{opacity:0.5;cursor:not-allowed}\n.fs-btn-primary{background:linear-gradient(135deg,var(--primary-color),var(--primary-hover));color:white;box-shadow:var(--shadow)}\n.fs-btn-primary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}\n.fs-btn-secondary{background:linear-gradient(135deg,var(--secondary-color),var(--secondary-hover));color:white;box-shadow:var(--shadow)}\n.fs-btn-secondary:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow-lg)}\n.fs-btn-outline{background:white;color:var(--text-primary);border:1px solid var(--border)}\n.fs-btn-outline:hover:not(:disabled){background:var(--surface);border-color:var(--text-secondary)}\n.fs-btn-danger{background:var(--danger-color);color:white}\n.fs-btn-danger:hover:not(:disabled){background:var(--danger-hover)}\n.dropdown{position:relative}\n.fs-dropdown-toggle{display:inline-flex;align-items:center;gap:4px}\n.fs-dropdown-menu{position:absolute;bottom:100%;left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:140px;z-index:1001;margin-bottom:8px;opacity:0;transform:translateY(10px);visibility:hidden;transition:var(--transition)}\n.dropdown:hover .fs-dropdown-menu{opacity:1;transform:translateY(0);visibility:visible}\n.fs-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}\n.fs-dropdown-item:hover{background:var(--surface)}\n.fs-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}\n.fs-dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}\n.fs-dropdown-divider{height:1px;background:var(--border);margin:4px 0}\n.toast{position:fixed;top:24px;right:24px;background:white;color:var(--text-primary);padding:12px 20px;border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:10002;font-size:14px;max-width:320px;animation:slideInRight 0.3s cubic-bezier(0.4,0,0.2,1);border-left:4px solid var(--info-color);display:flex;align-items:center;gap:12px}\n.toast.success{border-left-color:var(--secondary-color)}\n.toast.error{border-left-color:var(--danger-color)}\n.toast.warning{border-left-color:var(--warning-color)}\n.toast.info{border-left-color:var(--info-color)}\n.toast-icon{width:20px;height:20px}\n.fs-progress-modal{animation:modalSlideIn 0.3s cubic-bezier(0.4,0,0.2,1)}\n.fs-progress-content{padding:24px;text-align:center}\n.fs-progress-title{font-size:18px;font-weight:600;color:var(--text-primary);margin-bottom:20px;word-break:break-all;line-height:1.4}\n.fs-progress-bar-container{height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin-bottom:12px}\n.fs-progress-bar{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:4px;transition:width 0.3s ease}\n.fs-progress-info{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}\n.fs-progress-percent{font-size:16px;font-weight:600;color:var(--primary-color)}\n.fs-progress-desc{font-size:13px;color:var(--text-secondary);text-align:left;background:var(--surface);padding:12px;border-radius:var(--radius);margin-top:16px;word-break:break-all;line-height:1.4}\n.fs-progress-minimize-btn{position:absolute;top:16px;right:16px;width:32px;height:32px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}\n.fs-progress-minimize-btn:hover{background:var(--border);color:var(--text-primary)}\n.minimized-widget{position:fixed;right:24px;bottom:24px;background:white;border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:12px 16px;z-index:10005;min-width:240px;cursor:pointer;transition:var(--transition);border:1px solid var(--border)}\n.minimized-widget:hover{transform:translateY(-2px);box-shadow:var(--shadow-xl)}\n.fs-widget-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}\n.fs-widget-title{font-size:12px;font-weight:500;color:var(--text-primary)}\n.fs-widget-badge{background:var(--danger-color);color:white;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px}\n.fs-widget-progress{display:flex;align-items:center;gap:12px}\n.fs-widget-bar{flex:1;height:4px;background:var(--surface);border-radius:2px;overflow:hidden}\n.fs-widget-fill{height:100%;background:linear-gradient(90deg,var(--primary-color),var(--secondary-color));border-radius:2px}\n.fs-widget-percent{font-size:12px;font-weight:600;color:var(--primary-color);min-width:40px}\n.fs-task-list-container{margin-top:20px}\n.fs-task-toggle{width:100%;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text-secondary);font-size:13px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:var(--transition)}\n.fs-task-toggle:hover{background:#f1f5f9}\n.fs-task-toggle.active{background:var(--primary-color);color:white;border-color:var(--primary-color)}\n.fs-task-list{max-height:160px;overflow-y:auto;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);background:white;display:none}\n.fs-task-list.show{display:block}\n.fs-task-item{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:var(--transition)}\n.fs-task-item:last-child{border-bottom:none}\n.fs-task-item.current{background:rgba(99,102,241,0.05)}\n.fs-task-info{display:flex;align-items:center;gap:8px}\n.fs-task-icon{width:12px;height:12px;border-radius:50%}\n.fs-task-icon.generate{background:var(--secondary-color)}\n.fs-task-icon.save{background:var(--info-color)}\n.fs-task-icon.retry{background:var(--warning-color)}\n.fs-task-name{font-size:13px;color:var(--text-primary)}\n.fs-task-status{font-size:12px;color:var(--text-secondary)}\n.fs-task-remove{width:24px;height:24px;border-radius:50%;border:none;background:var(--surface);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:var(--transition)}\n.fs-task-remove:hover{background:var(--danger-color);color:white}\n.fs-task-remove:disabled{opacity:0.5;cursor:not-allowed}\n.fs-results-content{text-align:left}\n.fs-results-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}\n.fs-stat-card{padding:16px;border-radius:var(--radius);text-align:center}\n.fs-stat-card.success{background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2)}\n.fs-stat-card.failed{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2)}\n.fs-stat-value{font-size:24px;font-weight:700;margin-bottom:4px}\n.fs-stat-value.success{color:var(--secondary-color)}\n.fs-stat-value.failed{color:var(--danger-color)}\n.fs-stat-label{font-size:12px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px}\n.fs-failed-list{max-height:200px;overflow-y:auto;background:var(--surface);border-radius:var(--radius);padding:12px}\n.fs-failed-item{padding:8px 12px;background:white;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:8px;font-size:12px}\n.fs-failed-item:last-child{margin-bottom:0}\n.fs-failed-name{color:var(--text-primary);word-break:break-all}\n.fs-failed-error{color:var(--danger-color);font-size:11px;margin-top:4px}\n.fs-mfy-button-container{position:relative;display:inline-block}\n.fs-mfy-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 16px;background:linear-gradient(135deg,#64cc77,#4db366);color:white;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:var(--transition);box-shadow:var(--shadow);width:90px;box-sizing:border-box}\n.fs-mfy-button:hover{transform:translateY(-1px);box-shadow:var(--shadow-lg)}\n.fs-mfy-button svg{width:16px;height:16px}\n.fs-mfy-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:160px;z-index:1000;opacity:0;transform:translateY(-10px);visibility:hidden;transition:var(--transition)}\n.fs-mfy-button-container:hover .fs-mfy-dropdown{opacity:1;transform:translateY(0);visibility:visible}\n.fs-mfy-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}\n.fs-mfy-dropdown-item:hover{background:var(--surface)}\n.fs-mfy-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}\n.fs-mfy-dropdown-item:last-child{border-radius:0 0 var(--radius) var(--radius)}\n.fs-mfy-dropdown-divider{height:1px;background:var(--border);margin:4px 0}\n@keyframes fadeIn{from{opacity:0}\nto{opacity:1}\n}@keyframes slideUp{from{opacity:0;transform:translateY(20px)}\nto{opacity:1;transform:translateY(0)}\n}@keyframes slideInRight{from{opacity:0;transform:translateX(100%)}\nto{opacity:1;transform:translateX(0)}\n}@keyframes modalSlideIn{from{opacity:0;transform:translateY(-20px) scale(0.95)}\nto{opacity:1;transform:translateY(0) scale(1)}\n}@keyframes pulse{0%,100%{opacity:1}\n50%{opacity:0.5}\n}.animate-pulse{animation:pulse 2s cubic-bezier(0.4,0,0.6,1) infinite}\n/* ============================================================\n设置页面样式\n============================================================ */\n/* 1. 容器与布局 */\n.fs-settings-container {display: flex;flex-direction: column;gap: 12px;padding: 4px 0;}\n/* 2. 设置行项目 - 卡片感设计 */\n.fs-setting-row {display: flex;align-items: center;justify-content: space-between;padding: 16px;background: var(--surface);border-radius: var(--radius);transition: var(--transition);border: 1px solid transparent;}\n.fs-setting-row:hover {background: #ffffff;border-color: var(--border);box-shadow: var(--shadow-sm);transform: translateY(-1px);}\n.fs-setting-row.readonly {opacity: 0.6;cursor: not-allowed;}\n/* 3. 文本信息区 */\n.fs-setting-info {display: flex;flex-direction: column;gap: 4px;flex: 1;padding-right: 24px;}\n.fs-setting-label-text {font-size: 14.5px;font-weight: 600;color: var(--text-primary);letter-spacing: 0.3px;}\n.fs-setting-describe {font-size: 12.5px;color: var(--text-secondary);line-height: 1.5;}\n/* 4. 交互控件区 */\n.fs-setting-action {display: flex;align-items: center;justify-content: flex-end;min-width: 100px;}\n/* 5. Switch 开关 */\n.fs-settings-switch {position: relative;display: inline-block;width: 44px;height: 24px;}\n.fs-settings-switch input {opacity: 0;width: 0;height: 0;}\n.switch-slider {position: absolute;cursor: pointer;top: 0; left: 0; right: 0; bottom: 0;background-color: var(--border);transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 24px;}\n.switch-slider:before {position: absolute;content: \"\";height: 18px;width: 18px;left: 3px;bottom: 3px;background-color: white;transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);border-radius: 50%;box-shadow: 0 2px 4px rgba(0,0,0,0.1);}\n.fs-settings-switch input:checked + .switch-slider {background-color: var(--primary-color);}\n.fs-settings-switch input:focus + .switch-slider {box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);}\n.fs-settings-switch input:checked + .switch-slider:before {transform: translateX(20px);}\n/* 6. 分段选择器 (Segmented Radio) */\n.fs-settings-radio-group {display: flex;background: #eef2f6;padding: 3px;border-radius: 10px;gap: 2px;}\n.fs-reset-tab {cursor: pointer;position: relative;}\n.fs-reset-tab input {position: absolute;opacity: 0;}\n.fs-reset-tab span {display: block;padding: 6px 14px;font-size: 12px;font-weight: 500;border-radius: 7px;color: var(--text-secondary);transition: all 0.2s;}\n.fs-reset-tab input:checked + span {background: white;color: var(--primary-color);box-shadow: var(--shadow-sm);}\n/* 7. 输入框与下拉框 */\n.fs-settings-input, .fs-settings-select {width: 100%;max-width: 180px;padding: 8px 12px;border: 1.5px solid var(--border);border-radius: var(--radius-sm);background: #ffffff !important;color: var(--text-primary);font-size: 13px;transition: var(--transition);}\n.fs-settings-input:focus, .fs-settings-select:focus {border-color: var(--primary-color);outline: none;box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);}\n/* 8. 底部状态反馈样式 */\n.fs-settings-status {flex: 1;font-size: 13px;display: flex;align-items: center;gap: 6px;}\n.fs-status-warning {color: var(--warning-color);background: rgba(245, 158, 11, 0.1);padding: 4px 10px;border-radius: 20px;}\n.fs-status-success {color: var(--secondary-color);animation: fadeIn 0.3s ease;}\n/* 9. 底部按钮组微调 */\n.fs-modal-footer .button-group {display: flex;gap: 10px;}\n.fs-reset-default-btn {margin-right: auto; /* 将恢复默认按钮推向最左侧 */color: var(--text-secondary) !important;}\n.fs-reset-default-btn:hover {color: var(--danger-color) !important;border-color: var(--danger-color) !important;}/* 模态框布局固定 */\n.fs-settings-modal-box {width: 90%;max-width: 600px;max-height: 85vh; /* 限制最高高度 */display: flex;flex-direction: column; /* 纵向排列 Header, Content, Footer */}\n/* 内容滚动区 */\n.fs-settings-scroll-area {flex: 1; /* 自动占据剩余高度 */overflow-y: auto; /* 关键：设置项过多时在此滚动 */padding: 24px;background: #ffffff;}\n/* 只读行样式 */\n.fs-setting-row.readonly-row {background: #f1f5f9; /* 灰色背景 */opacity: 0.75;cursor: not-allowed;border: 1px dashed var(--border);}\n.fs-setting-row.readonly-row:hover {transform: none;box-shadow: none;}\n.readonly-badge {background: var(--text-tertiary);color: white;font-size: 10px;padding: 2px 6px;border-radius: 4px;margin-left: 8px;vertical-align: middle;}\n/* 禁用控件样式 */\n.fs-settings-switch.readonly, \n.fs-settings-radio-group.readonly,\n.fs-settings-select:disabled,\n.fs-settings-input:read-only {pointer-events: none; /* 禁止点击 */filter: grayscale(1); /* 置灰 */}\n/* Footer 固定在底部 */\n.fs-modal-footer {flex-shrink: 0;background: white;z-index: 10;}");
 ;// ./src/UiManager.js
 
+
+
+const UiManager_log = createLogger('UI');
 
 
 
@@ -3487,7 +3507,7 @@ class UiManager {
         const taskConfig = this.taskHandlers[taskType];
 
         if (!taskConfig) {
-            console.warn(`未知的 taskType: ${taskType}`);
+            UiManager_log.warn(`未知的 taskType: ${taskType}`);
             this.showToast(`未知的任务类型: ${taskType}`, 'error');
             return;
         }
@@ -3521,7 +3541,7 @@ class UiManager {
                 try {
                     await taskConfig.handler.call(this, task);
                 } catch (error) {
-                    console.error(`任务${task.id}执行失败:`, error);
+                    UiManager_log.error(`任务${task.id}执行失败:`, error);
                     this.showAlertModal('error', '任务执行失败', `任务${task.id}执行过程中出现错误: ${error.message}`);
                     this.showToast(`任务${task.id}执行失败: ${error.message}`, 'error');
                 }
@@ -3610,9 +3630,7 @@ class UiManager {
 
 
 
-
 initSettings();
-var src_console = new logger(window.console);
 const apiClient = new PanApiClient();
 const selector = new TableRowSelector();
 const shareLinkManager = new ShareLinkManager(apiClient);
