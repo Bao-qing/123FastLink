@@ -1,0 +1,19 @@
+{
+  "name": "123fastlink",
+  "version": "1.0.0",
+  "description": "这是一个用于123云盘的用户脚本，能够帮助用户生成秒传链接，从而实现快速上传和分享文件。",
+  "main": "123FastLink.user.js",
+  "scripts": {
+    "build": "webpack",
+    "dev": "webpack --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "css-loader": "^7.1.4",
+    "raw-loader": "^4.0.2",
+    "webpack": "^5.105.4",
+    "webpack-cli": "^7.0.2"
+  }
+}
