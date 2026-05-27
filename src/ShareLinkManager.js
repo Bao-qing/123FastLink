@@ -1,4 +1,7 @@
 import { GlobalConfig } from "./config";
+import { createLogger } from "./logger";
+
+const log = createLogger('ShareLink');
 
 export class ShareLinkManager {
     constructor(apiClient) {
@@ -33,7 +36,7 @@ export class ShareLinkManager {
      * @param {*} total 仅用来计算进度
      */
     async _getAllFileInfoByFolderId(parentFileId, folderName = '', total) {
-        //console.log("[123FASTLINK] [ShareLinkManager]", await this.apiClient.getFileList(parentFileId));
+        //log.log(await this.apiClient.getFileList(parentFileId));
         this.progressDesc = `正在扫描文件夹：${folderName}`;
         let progress = this.progress;
 
@@ -60,7 +63,7 @@ export class ShareLinkManager {
         });
 
         this.fileInfoList.push(...fileInfo);
-        console.log("[123FASTLINK] [ShareLinkManager]", "获取文件列表,ID:", parentFileId);
+        log.log("获取文件列表,ID:", parentFileId);
 
         const directoryFileInfo = allFileInfoList.filter(file => file.type === 1);
 
@@ -93,7 +96,7 @@ export class ShareLinkManager {
                 const response = await this.apiClient.getFileInfo(batch);
                 allFileInfo = allFileInfo.concat(response.data.InfoList || []);
             } catch (e) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '获取文件信息失败:', e);
+                log.error('获取文件信息失败:', e);
             }
             completed += batch.length;
             // 不能走到100，否则会自动消失，下面获取文件夹还用使用
@@ -265,7 +268,7 @@ export class ShareLinkManager {
                 shareFileInfo = shareLink.replace(`${commonPath}%`, '');
 
             } else {
-                console.error('[123FASTLINK] [ShareLinkManager]', '不支持的公共路径格式', commonPathLinkPrefix);
+                log.error('不支持的公共路径格式', commonPathLinkPrefix);
                 return [false, '不支持的公共路径格式', null];
             }
 
@@ -284,16 +287,16 @@ export class ShareLinkManager {
             let failed = false;
             // etag校验
             if (!this._isValidEtag(etag)) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', etag);
+                log.error('无效的etag:', etag);
                 failed = true;
             }
             const size = singleFileInfoList[1];
             if (isNaN(size) || Number(size) < 0) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件大小:', size);
+                log.error('无效的文件大小:', size);
                 failed = true;
             }
             if (!singleFileInfoList[2]) {
-                console.error('[123FASTLINK] [ShareLinkManager]', '无效的文件路径:', singleFileInfoList[2]);
+                log.error('无效的文件路径:', singleFileInfoList[2]);
                 failed = true;
             }
             if (failed) {
@@ -437,12 +440,12 @@ export class ShareLinkManager {
                 successList.push(fileInfo);
             } else {
                 failed++;
-                console.error('[123FASTLINK] [ShareLinkManager]', '保存文件失败:', fileInfo.fileName);
+                log.error('保存文件失败:', fileInfo.fileName);
                 fileInfo.error = reuse[1];
                 failedList.push(fileInfo);
             }
             completed++;
-            console.log('[123FASTLINK] [ShareLinkManager]', '已保存:', fileInfo.fileName);
+            log.log('已保存:', fileInfo.fileName);
             this.progress = Math.round((completed / total) * 100);
             this.progressDesc = `(成功: ${success}，失败: ${failed})
             正在保存第 ${completed} / ${total} 个文件(${fileInfo.fileName})...`;
@@ -655,7 +658,7 @@ export class ShareLinkManager {
                 shareFileList.forEach(file => {
                     file.etag = this._base62ToHex(file.etag);
                     if (!this._isValidEtag(file.etag)) {
-                        console.error('[123FASTLINK] [ShareLinkManager]', '无效的etag:', file.etag);
+                        log.error('无效的etag:', file.etag);
                         failedList.push({
                             etag: file.etag, size: file.size, path: file.path, fileName: file.path.split('/').pop()
                         });
@@ -667,7 +670,7 @@ export class ShareLinkManager {
             });
             return [true, null, shareFileList, failedList, commonPath];
         } catch (error) {
-            console.error('[123FASTLINK] [ShareLinkManager]', '解析JSON格式秒传链接失败:', error);
+            log.error('解析JSON格式秒传链接失败:', error);
             return [false, '解析JSON格式秒传链接失败: ' + error.message, null, null];
         }
     }
@@ -705,7 +708,7 @@ export class ShareLinkManager {
 
     _buildJsonShareLink(fileInfoList, commonPath = '', usesBase62EtagsInExport = false) {
         if (fileInfoList.length === 0) {
-            console.error('[123FASTLINK] [ShareLinkManager]', '解析秒传链接失败:', shareLink);
+            log.error('解析秒传链接失败:', shareLink);
             return [false, '解析秒传链接失败: 文件列表为空', null];
         }
         // if (usesBase62EtagsInExport) {
