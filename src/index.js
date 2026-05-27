@@ -18,3 +18,9 @@ if (GlobalConfig.DEBUGMODE) {
     window._selector = selector;
     window._uiManager = uiManager;
 }
+
+// 平台扩展：夸克网盘 / 天翼云盘
+if (__ENABLE_QUARK__ || __ENABLE_TIANYI__) {
+    const { init: initPlatforms } = require('./platforms/platformInit.js');
+    initPlatforms();
+}

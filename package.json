@@ -5,15 +5,16 @@
   "main": "123FastLink.user.js",
   "scripts": {
     "build": "webpack",
-    "dev": "webpack --watch"
+    "dev": "webpack --watch",
+    "publish": "node scripts/bump-version.js && webpack"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "css-loader": "^7.1.4",
     "raw-loader": "^4.0.2",
-    "webpack": "^5.105.4",
+    "webpack": "^5.107.2",
     "webpack-cli": "^7.0.2"
   }
 }

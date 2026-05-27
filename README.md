@@ -10,6 +10,8 @@
 5. [常见问题](#常见问题)
 6. [注意事项](#注意事项)
 7. [更新日志](#更新日志)
+8. [夸克和天翼支持](#夸克和天翼支持)
+9. [二次开发说明](#二次开发说明)
 
 ---
 
@@ -83,7 +85,7 @@ Tampermonkey 是一个用户脚本管理器，123FastLink 需要它才能运行�
 
 **方法二：手动安装**
 1. 在 Tampermonkey 中点击 **"创建新脚本"**
-2. 复制 `123FastLink.v3.user.js` 或 `123FastLink.v3.debug.js` 的全部内容
+2. 复制 `dist/123FastLink.v3.user.js`的全部内容
 3. 粘贴到脚本编辑器中
 4. 点击 **"保存"** (Ctrl+S)
 
@@ -402,6 +404,101 @@ npm run dev      # 监听模式，文件变更自动重新打包
 
 
 ---
+
+## 夸克和天翼支持
+
+本部分由 [JiangKaslana](https://github.com/JiangKaslana) 贡献，基于 [123云盘秒传json生成器-夸克网盘-天翼云盘](https://greasyfork.org/zh-CN/scripts/555404-123云盘秒传json生成器-夸克网盘-天翼云盘) 
+
+
+123FastLink 提供了对夸克网盘和天翼云盘的集成支持，可在这些平台上直接生成和保存秒传链接。
+
+### 支持平台
+
+| 平台 | 支持页面 |
+|------|---------|
+| 夸克网盘 | `pan.quark.cn`、`drive.quark.cn` |
+| 天翼云盘 | `cloud.189.cn` |
+
+### 安装说明
+
+项目提供两个版本的脚本：
+
+- **`123FastLink.v3.user.js`** — 纯净版，仅支持123云盘
+- **`123FastLinkWithPlatform.v3.user.js`** — 集成版，同时支持123云盘、夸克网盘、天翼云盘
+
+如需使用夸克/天翼功能，请安装集成版脚本。
+
+### 功能说明
+
+在夸克网盘或天翼云盘页面中，脚本会自动识别当前平台并加载对应的功能模块，提供与123云盘一致的秒传链接生成与保存体验。
+
+---
+
+## 二次开发说明
+
+### 环境准备
+
+```bash
+# 安装依赖
+npm install
+
+# 开发模式（监听文件变化自动构建）
+npm run dev
+
+# 构建
+npm run build
+
+# 发布（自动递增版本号并构建）
+npm run publish
+```
+
+### 项目结构
+
+```
+123FastLink/
+├── src/
+│   ├── index.js               # 入口文件
+│   ├── config.js              # 全局配置与用户设置
+│   ├── PanApiClient.js        # 123云盘 API 客户端
+│   ├── ShareLinkManager.js    # 秒传链接核心逻辑
+│   ├── TableRowSelector.js    # 文件列表选择器
+│   ├── UiManager.js           # UI 管理器
+│   ├── sign.js                # 签名/校验算法
+│   ├── logger.js              # 日志模块
+│   ├── styles.css             # UI 样式
+│   └── platforms/             # 第三方平台集成
+│       ├── platformInit.js    # 平台初始化入口
+│       ├── quark/             # 夸克网盘模块
+│       └── tianyi/            # 天翼云盘模块
+├── dist/                      # 构建输出
+├── scripts/
+│   └── bump-version.js        # 版本号自增脚本
+├── version.json               # 当前版本号
+├── webpack.config.js          # Webpack 构建配置
+└── .env                       # 环境变量（可选）
+```
+
+### 构建说明
+
+项目使用 Webpack 打包，构建时会同时输出两个版本：
+
+| 文件 | 说明 |
+|------|------|
+| `123FastLink.v3.user.js` | 纯净版，仅支持123云盘 |
+| `123FastLinkWithPlatform.v3.user.js` | 集成版，支持123云盘 + 夸克 + 天翼 |
+
+### 版本号规则
+
+版本号格式为 `年.月.日.版次`，存储在 `version.json` 中。运行 `npm run publish` 时会自动递增：
+- 同一天内多次发布，版次自增（如 `2026.5.28.1` → `2026.5.28.2`）
+- 跨天发布，版次重置为 1（如 `2026.5.28.3` → `2026.5.29.1`）
+
+### 添加新平台
+
+1. 在 `src/platforms/` 下创建新平台目录（如 `baidu/`）
+2. 实现 `Service.js`（API 调用）和 `Ui.js`（界面交互）
+3. 在 `platformInit.js` 中注册新平台
+4. 在 `webpack.config.js` 的 `createConfig` 中添加对应的 match/connect 规则
 
 ## 联系方式
 

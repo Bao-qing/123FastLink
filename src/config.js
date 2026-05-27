@@ -1,5 +1,5 @@
 export var GlobalConfig = {
-    scriptVersion: "3.2.0",
+    scriptVersion: "3.2.1",
     usesBase62EtagsInExport: true,
     getFileListPageDelay: 500,
     getFileInfoBatchSize: 100,
@@ -11,7 +11,7 @@ export var GlobalConfig = {
     COMMON_PATH_LINK_PREFIX_V2: "123FLCPV2$",
     MAX_TEXT_FILE_SIZE: 3 * 1024 * 1024,
     DEFAULT_EXPORT_FILENAME: "123FastLink_Export",
-    DEBUGMODE: true,
+    DEBUGMODE: false,
     seedFilePathId: null,
     secondaryLinkUseJson: true
 };
