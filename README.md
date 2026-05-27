@@ -352,6 +352,49 @@ Tampermonkey 是一个用户脚本管理器，123FastLink 需要它才能运行�
 
 ---
 
+## 代码结构
+
+```
+123FastLink/
+├── src/                        # 源代码目录
+│   ├── index.js                # 入口文件，初始化各模块并启动脚本
+│   ├── config.js               # 全局配置与用户设置管理（GM_getValue/GM_setValue）
+│   ├── PanApiClient.js         # 123云盘 API 客户端，封装文件列表/上传/下载等请求
+│   ├── ShareLinkManager.js     # 秒传链接核心逻辑（生成、解析、保存）
+│   ├── TableRowSelector.js     # 文件列表选择器，通过 React Fiber 提取选中文件数据
+│   ├── UiManager.js            # UI 管理器，负责按钮、弹窗、进度条、设置面板
+│   ├── sign.js                 # 签名/校验算法（CRC 计算等）
+│   ├── logger.js               # 日志模块，带时间戳和模块名的格式化输出
+│   └── styles.css              # 脚本注入的 UI 样式
+├── dist/                       # 构建输出目录
+│   └── 123FastLink.v3.user.js  # webpack 打包后的 UserScript 文件
+├── webpack.config.js           # Webpack 构建配置（BannerPlugin 注入 UserScript 头）
+├── package.json                # 项目依赖与脚本命令
+├── CHANGELOG.md                # 更新日志
+└── TODO.md                     # 待办事项
+```
+
+### 模块关系
+
+```
+index.js（入口）
+  ├── config.js         → 加载用户设置
+  ├── PanApiClient      → API 请求层
+  ├── TableRowSelector  → 获取用户选中的文件
+  ├── ShareLinkManager  → 调用 API 生成/保存秒传链接
+  └── UiManager         → 渲染 UI，响应用户操作
+        └── styles.css  → 样式注入
+```
+
+### 构建
+
+```bash
+npm run build    # 生产构建，输出到 dist/
+npm run dev      # 监听模式，文件变更自动重新打包
+```
+
+---
+
 ## 更新日志
 
 详见 [CHANGELOG.md](./CHANGELOG.md)
