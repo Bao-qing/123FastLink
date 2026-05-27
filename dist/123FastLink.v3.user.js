@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         123FastLink
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.28.1
+// @version      2026.5.27.1
 // @description  123云盘秒传链接脚本
 // @author       Baoqing
 // @author       Chaofan
