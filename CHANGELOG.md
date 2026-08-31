@@ -1,5 +1,10 @@
 # 更新日志
 
+### 未发布
+
+- 修复新版 123 网盘未提供 `sessionStorage.filePath` 时，保存秒传链接触发 `JSON.parse(undefined)` 的问题。
+- 获取当前目录 ID 时增加 URL `homeFilePath` 回退，并在路径信息缺失时安全使用根目录。
+
 ### V3.2.1 (2026-05-28)
 
 - ✅ 添加夸克和天翼支持
