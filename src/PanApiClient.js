@@ -132,8 +132,29 @@ export class PanApiClient {
 
     // 从sessionStorage中获取父级文件ID
     async getParentFileId() {
-        const homeFilePath = JSON.parse(sessionStorage['filePath'])['homeFilePath'];
-        const parentFileId = (homeFilePath[homeFilePath.length - 1] || 0);
+        let homeFilePath = null;
+
+        // 旧版页面将当前路径写入 sessionStorage，新版页面有时只保留在 URL 中。
+        const rawFilePath = sessionStorage.getItem('filePath') || sessionStorage['filePath'];
+        if (rawFilePath) {
+            try {
+                const filePathData = typeof rawFilePath === 'string' ? JSON.parse(rawFilePath) : rawFilePath;
+                if (Array.isArray(filePathData?.homeFilePath)) {
+                    homeFilePath = filePathData.homeFilePath;
+                }
+            } catch (error) {
+                log.warn('解析 sessionStorage.filePath 失败，将尝试从 URL 获取当前路径:', error);
+            }
+        }
+
+        if (!homeFilePath) {
+            const urlHomeFilePath = new URLSearchParams(window.location.search).get('homeFilePath');
+            if (urlHomeFilePath) {
+                homeFilePath = urlHomeFilePath.split(',').filter(Boolean);
+            }
+        }
+
+        const parentFileId = (homeFilePath?.[homeFilePath.length - 1] || 0);
         log.log('parentFileId:', parentFileId);
         return parentFileId.toString();
     }
