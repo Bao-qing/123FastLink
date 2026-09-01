@@ -32,6 +32,8 @@
 .fs-dropdown-toggle{display:inline-flex;align-items:center;gap:4px}
 .fs-dropdown-menu{position:absolute;bottom:100%;left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:140px;z-index:1001;margin-bottom:8px;opacity:0;transform:translateY(10px);visibility:hidden;transition:var(--transition)}
 .dropdown:hover .fs-dropdown-menu{opacity:1;transform:translateY(0);visibility:visible}
+/* 透明桥接：伪元素覆盖按钮与菜单之间的 8px 间隙，保持 hover 连续 */
+.fs-dropdown-menu::before{content:"";position:absolute;top:100%;left:0;right:0;height:8px}
 .fs-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
 .fs-dropdown-item:hover{background:var(--surface)}
 .fs-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}
@@ -101,6 +103,8 @@
 .fs-mfy-button svg{width:16px;height:16px}
 .fs-mfy-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:white;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);min-width:160px;z-index:1000;opacity:0;transform:translateY(-10px);visibility:hidden;transition:var(--transition)}
 .fs-mfy-button-container:hover .fs-mfy-dropdown{opacity:1;transform:translateY(0);visibility:visible}
+/* 透明桥接：伪元素覆盖按钮与菜单之间的 4px 间隙，保持 hover 连续 */
+.fs-mfy-dropdown::before{content:"";position:absolute;bottom:100%;left:0;right:0;height:4px}
 .fs-mfy-dropdown-item{padding:10px 16px;font-size:13px;color:var(--text-primary);cursor:pointer;transition:var(--transition);display:flex;align-items:center;gap:8px}
 .fs-mfy-dropdown-item:hover{background:var(--surface)}
 .fs-mfy-dropdown-item:first-child{border-radius:var(--radius) var(--radius) 0 0}

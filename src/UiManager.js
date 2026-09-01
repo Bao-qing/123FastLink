@@ -565,34 +565,23 @@ export class UiManager {
                 <textarea id="copyText" placeholder="请输入或粘贴秒传链接...">${defaultText}</textarea>
             </div>
             <div class="fs-modal-footer">
-                <div class="dropdown">
-                    <button class="btn fs-btn-primary fs-dropdown-toggle">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                        复制
-                    </button>
-                    <div class="fs-dropdown-menu">
-                        <div class="fs-dropdown-item" data-type="json">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path>
-                                <path d="M18 14h-8"></path>
-                                <path d="M15 18h-5"></path>
-                                <path d="M10 6h8v4h-8V6Z"></path>
-                            </svg>
-                            复制JSON
-                        </div>
-                        <div class="fs-dropdown-item" data-type="text">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="16 18 22 12 16 6"></polyline>
-                                <polyline points="8 6 2 12 8 18"></polyline>
-                            </svg>
-                            复制纯文本
-                        </div>
-                    </div>
-                </div>
-                <button class="btn fs-btn-secondary" id="exportJsonButton">
+                <button class="btn fs-btn-primary" id="copyJsonButton">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"></path>
+                        <path d="M18 14h-8"></path>
+                        <path d="M15 18h-5"></path>
+                        <path d="M10 6h8v4h-8V6Z"></path>
+                    </svg>
+                    复制JSON
+                </button>
+                <button class="btn fs-btn-secondary" id="copyTextButton">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    复制纯文本
+                </button>
+                <button class="btn fs-btn-outline" id="exportJsonButton">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                         <polyline points="7 10 12 15 17 10"></polyline>
@@ -604,20 +593,16 @@ export class UiManager {
         </div>
     `;
 
-        // 复制菜单事件
-        const dropdownItems = modalOverlay.querySelectorAll('.fs-dropdown-item');
-        dropdownItems.forEach(item => {
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const type = item.dataset.type;
-                this.copyContent(type);
-            });
+        // 复制JSON按钮事件
+        modalOverlay.querySelector('#copyJsonButton').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.copyContent('json');
         });
 
-        // 主复制按钮事件
-        modalOverlay.querySelector('.fs-dropdown-toggle').addEventListener('click', (e) => {
+        // 复制纯文本按钮事件
+        modalOverlay.querySelector('#copyTextButton').addEventListener('click', (e) => {
             e.stopPropagation();
-            this.copyContent('default');
+            this.copyContent('text');
         });
 
         // 导出按钮事件
