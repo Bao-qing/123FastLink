@@ -1447,8 +1447,12 @@ export class UiManager {
      * 模拟点击刷新按钮，刷新页面文件列表
      */
     renewWebPageList() {
-        // 刷新页面文件列表
-        const renewButton = document.querySelector('.layout-operate-icon.mfy-tooltip svg');
+        // 刷新页面文件列表：定位含 refresh 图标的刷新按钮（use 仅带 xlink:href，需遍历匹配）
+        const refreshUse = [...document.querySelectorAll('.layout-operate-icon svg use')].find(use => {
+            const href = use.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || use.getAttribute('href') || '';
+            return href.includes('refresh');
+        });
+        const renewButton = refreshUse || document.querySelector('.layout-operate-icon svg');
         if (renewButton) {
             const clickEvent = new MouseEvent('click', {
                 bubbles: true, cancelable: true
